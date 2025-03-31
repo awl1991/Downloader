@@ -1,0 +1,49 @@
+{
+    "name": "yt-dlp-downloader",
+    "version": "1.0.0",
+    "description": "A YouTube video downloader using yt-dlp and Electron for Windows",
+    "main": "src/main/main.js",
+    "scripts": {
+        "start": "electron .",
+        "build": "electron-builder --win",
+        "postinstall": "electron-builder install-app-deps"
+    },
+    "build": {
+        "appId": "com.example.ytdlpdownloader",
+        "productName": "YT-DLP Downloader",
+        "files": [
+            "src/main/**/*",
+            "src/renderer/**/*",
+            "assets/**/*",
+            "package.json"
+        ],
+        "extraResources": [
+            {
+                "from": "assets/",
+                "to": "assets/"
+            }
+        ],
+        "extraFiles": [
+            {
+                "from": "assets/",
+                "to": "assets/"
+            }
+        ],
+        "directories": {
+            "output": "dist"
+        },
+        "win": {
+            "target": [
+                "nsis",
+                "portable"
+            ],
+            "icon": "assets/icon.png"
+        }
+    },
+    "devDependencies": {
+        "electron": "^25.9.8",
+        "electron-builder": "^24.13.3"
+    },
+    "author": "Your Name",
+    "license": "MIT"
+}

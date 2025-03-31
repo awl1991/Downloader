@@ -1,0 +1,12 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  downloadVideo: (options) => ipcRenderer.send('download-video', options),
+  onDownloadUpdate: (callback) => ipcRenderer.on('download-update', (event, message) => callback(message)),
+  onDownloadComplete: (callback) => ipcRenderer.on('download-complete', (event, data) => callback(data)),
+  fetchVideoDuration: (url) => ipcRenderer.invoke('fetch-video-duration', url),
+  selectFolder: () => ipcRenderer.invoke('select-folder'),
+  getDependencyStatus: () => ipcRenderer.invoke('get-dependency-status'),
+  openExternalLink: (url) => ipcRenderer.invoke('open-external-link', url),
+  windowControl: (action) => ipcRenderer.send('window-control', action)
+});

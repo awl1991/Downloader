@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en" style="background-color: #0B0F19;">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data: app-asset:;">
+    <title>YT-DLP Downloader</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        dark: { 900: '#0B0F19', 800: '#111827', 700: '#1F2937', 600: '#374151' },
+                        accent: { 500: '#10B981', 600: '#059669' }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-dark-900 text-gray-100 min-h-screen font-sans">
+    <div class="title-bar flex items-center justify-between p-1 fixed top-0 left-0 right-0 z-50">
+        <div class="flex items-center px-2">
+            <img src="app-asset://assets/icon.png" alt="App Icon" class="h-6 w-6">
+        </div>
+        <div class="flex items-center">
+            <button id="minimizeBtn" class="title-bar-button p-1 hover:bg-gray-700 rounded focus:outline-none transition-colors mr-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400 hover:text-white" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5 10a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1z" clip-rule="evenodd" />
+                </svg>
+            </button>
+            <button id="fullscreenBtn" class="title-bar-button p-1 hover:bg-gray-700 rounded focus:outline-none transition-colors mr-1">
+                <svg id="fullscreenIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400 hover:text-white" viewBox="0 0 20 20" fill="none" stroke="currentColor">
+                    <rect x="4" y="4" width="12" height="12" stroke-width="1.5" />
+                </svg>
+                <svg id="exitFullscreenIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400 hover:text-white hidden" viewBox="0 0 20 20" fill="none" stroke="currentColor">
+                    <rect x="6" y="6" width="8" height="8" stroke-width="1.5" />
+                </svg>
+            </button>
+            <button id="closeBtn" class="title-bar-button p-1 hover:bg-red-600 rounded focus:outline-none transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400 hover:text-white" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <div class="fixed inset-x-0 top-8 bottom-0 overflow-y-auto">
+        <div class="flex items-center justify-center py-6">
+            <div class="max-w-3xl w-full px-6">
+                <div class="mb-6 text-center">
+                    <h1 class="text-4xl font-bold text-white mb-2">Video Downloader</h1>
+                    <p class="text-gray-400">Download and trim any video with precision</p>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-dark-800 rounded-xl p-6 shadow-lg border border-dark-600 transform transition-all hover:scale-[1.01]">
+                        <h2 class="text-xl font-bold mb-5 flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-accent-500" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+                            </svg>
+                            Input Settings
+                        </h2>
+                        <form id="downloadForm" class="space-y-5">
+                            <!-- Form content unchanged -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Video URL</label>
+                                <div class="relative rounded-md shadow-sm">
+                                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" clip-rule="evenodd" />
+                                        </svg>
+                                    </div>
+                                    <input type="text" id="url" name="url" required class="bg-dark-700 border border-dark-600 focus:ring-accent-500 focus:border-accent-500 block w-full pl-10 py-3 pr-3 rounded-lg text-gray-200">
+                                    <button type="button" id="clearFormBtn" class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-300 p-1 rounded">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="border-t border-dark-600 pt-4">
+                                <h3 class="text-sm font-medium text-gray-300 mb-3">Time Range <span class="text-xs text-gray-500">(Optional)</span></h3>
+                                <div id="durationSection" class="space-y-5">
+                                    <div id="durationInfo" class="hidden">
+                                        <div class="flex justify-between items-center mb-2">
+                                            <span class="text-xs text_gray-400">Video Duration</span>
+                                            <span id="videoDuration" class="text-xs font-mono bg-dark-700 px-2 py-1 rounded text-accent-500">--:--:--</span>
+                                        </div>
+                                        <div id="durationLoading" class="hidden flex items-center space-x-2 my-1">
+                                            <div class="animate-pulse flex space-x-2">
+                                                <div class="h-2 w-2 bg-accent-500 rounded-full"></div>
+                                                <div class="h-2 w-2 bg-accent-500 rounded-full animation-delay-200"></div>
+                                                <div class="h-2 w-2 bg-accent-500 rounded-full animation-delay-400"></div>
+                                            </div>
+                                            <span class="text-xs text-gray-400">Getting video duration...</span>
+                                        </div>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <div class="flex justify-between items-center">
+                                            <label class="text-xs text-gray-400">Clip Length</label>
+                                            <output id="videoDurationDisplay" class="text-xs text-accent-500">00:00:00</output>
+                                        </div>
+                                        <div class="flex flex-col">
+                                            <div class="dual-range-container" id="timeRangeContainer">
+                                                <div class="range-slider-track"></div>
+                                                <div class="range-slider-track-inner" id="rangeSliderInner"></div>
+                                                <div class="range-slider-handle" id="startHandle"></div>
+                                                <div class="range-slider-value" id="startValue">0</div>
+                                                <div class="range-slider-handle" id="endHandle"></div>
+                                                <div class="range-slider-value" id="endValue">0</div>
+                                                <div class="ticks-container" id="ticksContainer"></div>
+                                            </div>
+                                            <div class="flex justify-center space-x-4 mt-2 mb-4">
+                                                <div class="relative w-24">
+                                                    <input type="text" id="start" name="s" placeholder="HH:MM:SS" class="w-full bg-dark-700 border border-dark-600 rounded text-xs text-center py-1 text-gray-300 pr-6">
+                                                    <div class="absolute right-0 inset-y-0 flex flex-col border-l border-dark-600">
+                                                        <button type="button" id="startIncrementBtn" class="flex-1 px-1 hover:bg-dark-600 text-gray-400 hover:text-accent-500 rounded-tr focus:outline-none">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                                                <path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />
+                                                            </svg>
+                                                        </button>
+                                                        <button type="button" id="startDecrementBtn" class="flex-1 px-1 hover:bg-dark-600 text-gray-400 hover:text-accent-500 rounded-br focus:outline-none">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                                                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                                            </svg>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div class="relative w-24">
+                                                    <input type="text" id="end" name="e" placeholder="HH:MM:SS" class="w-full bg-dark-700 border border-dark-600 rounded text-xs text-center py-1 text-gray-300 pr-6">
+                                                    <div class="absolute right-0 inset-y-0 flex flex-col border-l border-dark-600">
+                                                        <button type="button" id="endIncrementBtn" class="flex-1 px-1 hover:bg-dark-600 text-gray-400 hover:text-accent-500 rounded-tr focus:outline-none">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                                                <path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />
+                                                            </svg>
+                                                        </button>
+                                                        <button type="button" id="endDecrementBtn" class="flex-1 px-1 hover:bg-dark-600 text-gray-400 hover:text-accent-500 rounded-br focus:outline-none">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                                                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                                            </svg>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="border-t border-dark-600 pt-4">
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Download Location</label>
+                                <div class="flex space-x-2">
+                                    <div class="relative rounded-md shadow-sm flex-grow">
+                                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" />
+                                            </svg>
+                                        </div>
+                                        <input type="text" id="downloadLocation" name="downloadLocation" class="bg-dark-700 border border-dark-600 focus:ring-accent-500 focus:border-accent-500 block w-full pl-10 py-2 rounded-lg text-gray-200 text-sm h-[38px]" placeholder="C:/Downloads">
+                                    </div>
+                                    <button type="button" id="browseButton" class="bg-dark-700 text-gray-300 border border-dark-600 px-3 rounded-lg hover:bg-dark-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent-500 flex items-center h-[38px]">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
+                                        </svg>
+                                        Browse
+                                    </button>
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">Folder where videos will be saved</p>
+                            </div>
+                            <button type="submit" class="w-full bg-gradient-to-r from-accent-600 to-accent-500 text-white py-3 px-4 rounded-lg hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent-500 flex items-center justify-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                                Download Video
+                            </button>
+                        </form>
+                    </div>
+                    <div class="bg-dark-800 rounded-xl p-6 shadow-lg border border-dark-600 flex flex-col transform transition-all hover:scale-[1.01]">
+                        <h2 class="text-xl font-bold mb-5 flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-accent-500" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+                            </svg>
+                            Status & Results
+                        </h2>
+                        <div id="statusContainer" class="flex-grow flex flex-col items-center justify-center space-y-6 relative">
+                            <div id="initialState" class="text-center">
+                                <div class="flex justify-center mb-4">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                    </svg>
+                                </div>
+                                <p class="text-gray-400">Enter a URL to start downloading</p>
+                            </div>
+                            <div id="progressState" class="w-full hidden">
+                                <div class="flex flex-col items-center">
+                                    <div class="w-32 h-32 relative flex items-center justify-center mb-4">
+                                        <div class="wave"></div>
+                                        <svg class="w-full h-full" viewBox="0 0 100 100">
+                                            <circle cx="50" cy="50" r="45" fill="transparent" stroke-width="3" stroke="#374151" />
+                                            <circle class="progress-ring__circle" cx="50" cy="50" r="45" fill="transparent" stroke-width="8" stroke="#10B981" stroke-dasharray="282.7" stroke-dashoffset="282.7" />
+                                        </svg>
+                                        <div class="absolute text-xl font-bold text-white" id="progressPercent">0%</div>
+                                    </div>
+                                    <div id="statusText" class="text-center text-sm text-gray-300 my-2 font-mono">Initializing download...</div>
+                                </div>
+                            </div>
+                            <div id="resultState" class="w-full hidden">
+                                <div class="flex items-center justify-center mb-4">
+                                    <div class="bg-dark-700 rounded-full p-3 border border-green-500">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="text-center mb-6">
+                                    <h3 class="text-lg font-medium text-white">Download Complete</h3>
+                                    <p class="text-sm text-gray-400" id="downloadSuccessMessage">Video successfully downloaded!</p>
+                                </div>
+                                <div class="bg-dark-700 rounded-lg p-4 border border-dark-600">
+                                    <div class="flex items-center mb-2">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-accent-500 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+                                        </svg>
+                                        <span class="text-sm font-medium text-gray-300">Video Details</span>
+                                    </div>
+                                    <div class="flex items-center justify-between py-2 px-4 bg-dark-800 rounded-md">
+                                        <span class="text-sm text-gray-400">Duration:</span>
+                                        <span id="downloadedVideoDuration" class="text-sm font-mono text-accent-500">00:00:00</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-4 border-t border-dark-600 pt-4">
+                            <button id="toggleLogs" class="text-xs text-gray-400 flex items-center hover:text-gray-300 focus:outline-none">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                                Show Console Output
+                            </button>
+                            <div id="output" class="mt-2 hidden text-xs text-gray-400 bg-dark-900 p-3 rounded-md font-mono h-40 overflow-auto custom-scrollbar"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    <script type="module">
+        import VideoDownloader from './components/VideoDownloader.js';
+        document.addEventListener('DOMContentLoaded', () => new VideoDownloader());
+    </script>
+</body>
+</html>
