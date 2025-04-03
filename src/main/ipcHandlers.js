@@ -167,19 +167,18 @@ async function invokeYtdlpDownload(mainWindow, { url, start, end, downloadLocati
 
   logMessage(mainWindow, 'Downloading video');
   const ytdlpArgs = [
-    '-f', 'bv*+ba/b/best',
-    '--merge-output-format', 'mp4',
-    '--no-mtime',
-    '--no-check-certificate',
-    '--geo-bypass',
-    '--ignore-errors',
-    '--force-overwrites',
-    '--retry-sleep', '5',
-    '--max-filesize', '2G',
-    '--extractor-args', 'youtube:player_client=android,web',
-    '--extractor-retries', '3',
-    '-o', tempFile,
-    url
+    '-f', '[height<=1080][ext=mp4]/bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080][ext=mp4]/best[ext=mp4]', // 1080p or lower
+    '--merge-output-format', 'mp4', // Ensure MP4 output
+    '--no-mtime', // Don’t set modification time
+    '--no-check-certificate', // Skip SSL verification
+    '--geo-bypass', // Bypass geo-restrictions
+    '--ignore-errors', // Continue on errors
+    '--force-overwrites', // Overwrite existing files
+    '--retry-sleep', '5', // Wait 5 seconds between retries
+    '--extractor-args', 'youtube:player_client=android,web', // Extractor settings
+    '--extractor-retries', '3', // Retry extraction 3 times
+    '-o', tempFile, // Output file path
+    url // The Rumble URL
   ];
   const ytDlp = spawn(status.ytDlpPath, ytdlpArgs, { shell: false });
   ytDlp.stdout.on('data', (data) => logMessage(mainWindow, `yt-dlp: ${data.toString().trim()}`));

@@ -49,6 +49,8 @@ class VideoDownloader {
     document.getElementById('videoDurationDisplay').textContent = '00:00:00';
     document.getElementById('downloadLocation').value = downloadLocation;
     this.switchToInitialState();
+    // Reset the download button state
+    this.updateButtonState('idle');
     this.logOutput('Form cleared while preserving download location. Ready for new input.', 'text-accent-500');
   }
 

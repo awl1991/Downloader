@@ -54,19 +54,15 @@ function createWindow() {
         nodeIntegration: false,
         sandbox: false
       },
-      // // Prevent transparent window flash with dialogs
-      // transparent: false,
-      // opacity: 1.0,
-      // skipTaskbar: false
     });
 
     win.once('ready-to-show', () => {
       logToFile('Window content loaded, showing window');
       win.show();
       
-      // Open DevTools for debugging
-     // win.webContents.openDevTools();
-      logToFile('DevTools opened for debugging');
+        // Open DevTools for debugging
+       // win.webContents.openDevTools();
+      // logToFile('DevTools opened for debugging');
     });
 
     // Determine the correct path to the HTML file based on whether we're packaged
