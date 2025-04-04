@@ -161,6 +161,18 @@ html, body {
     background: #059669;
 }
 
+.range-slider-handle.active-dot::after {
+    content: '';
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    background-color: white;
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
 @keyframes bubble-pulse {
     0% { transform: translateX(-50%) scale(1); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3); }
     50% { transform: translateX(-50%) scale(1.08); box-shadow: 0 5px 15px rgba(16, 185, 129, 0.4); }

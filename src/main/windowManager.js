@@ -61,7 +61,7 @@ function createWindow() {
       win.show();
       
         // Open DevTools for debugging
-       // win.webContents.openDevTools();
+       win.webContents.openDevTools();
       // logToFile('DevTools opened for debugging');
     });
 

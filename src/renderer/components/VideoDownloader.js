@@ -9,6 +9,9 @@ class AppState {
     this.currentStage = 'initial';
     this.downloadStartTime = null;
     this.progressRing = null;
+    // Add clips array for multiple clips
+    this.clips = [{ id: 1, startTime: 0, endTime: 0, color: '#10B981' }]; // Default first clip
+    this.activeClipId = 1; // Track which clip is currently being adjusted
   }
 }
 
@@ -31,6 +34,9 @@ class VideoDownloader {
   init() {
     this.slider.setupDefault();
     this.bindEvents();
+    
+    // Create initial clip selection UI
+    this.updateClipSelectionUI();
   }
 
   get videoUrl() { return this.state._videoUrl; }
@@ -42,12 +48,40 @@ class VideoDownloader {
     this.videoUrl = '';
     document.getElementById('videoDuration').textContent = '--:--:--';
     document.getElementById('durationInfo').classList.add('hidden');
+    
+    // Reset to single clip state - clear all additional clips
+    this.state.clips = [{ 
+      id: 1, 
+      startTime: 0, 
+      endTime: 0, 
+      color: '#10B981' 
+    }];
+    this.state.activeClipId = 1;
+    
+    // Remove any additional clip handles and tracks from the DOM
+    this.slider.cleanupMultiClipElements();
+    
+    // Reset slider to default single clip display
     this.slider.setupDefault();
+    
+    // Clear the clip selection container completely
+    const clipSelectionContainer = document.getElementById('clipSelectionContainer');
+    if (clipSelectionContainer) {
+      clipSelectionContainer.innerHTML = '';
+    }
+    
     this.state.videoDurationSeconds = 0;
     document.getElementById('start').value = '';
     document.getElementById('end').value = '';
     document.getElementById('videoDurationDisplay').textContent = '00:00:00';
     document.getElementById('downloadLocation').value = downloadLocation;
+    
+    // Ensure we rebuild the clip box (for single clip) after a form clear
+    requestAnimationFrame(() => {
+      this.updateClipSelectionUI();
+      this.updateClipHeaderText();
+    });
+    
     this.switchToInitialState();
     // Reset the download button state
     this.updateButtonState('idle');
@@ -114,6 +148,12 @@ class VideoDownloader {
 
     window.electronAPI.onDownloadUpdate((update) => this.handleDownloadUpdate(update));
     window.electronAPI.onDownloadComplete((data) => this.handleDownloadComplete(data));
+    
+    // Add event listener for the "Add Clip" button
+    const addClipBtn = document.getElementById('addClipBtn');
+    if (addClipBtn) {
+      addClipBtn.addEventListener('click', () => this.addClip());
+    }
 
     // Add a simpler toggle logs function
     const toggleLogsBtn = document.getElementById('toggleLogs');
@@ -162,20 +202,89 @@ class VideoDownloader {
       info: document.getElementById('durationInfo'),
       loading: document.getElementById('durationLoading'),
       duration: document.getElementById('videoDuration'),
+      videoName: document.getElementById('videoName'),
       container: document.getElementById('timeRangeContainer')
     };
 
     elements.info.classList.remove('hidden');
     elements.loading.classList.remove('hidden');
     elements.duration.textContent = 'Loading...';
+    elements.videoName.textContent = 'Loading...';
     elements.container.style.pointerEvents = 'none';
 
     try {
       this.logOutput(`Fetching video duration for: ${url}`);
-      this.state.videoDurationSeconds = await window.electronAPI.fetchVideoDuration(url);
-      elements.duration.textContent = Utils.formatTimeFromSeconds(this.state.videoDurationSeconds);
+      
+      // Start two promises in parallel - one for duration, one for title
+      const durationPromise = window.electronAPI.fetchVideoDuration(url);
+      const titlePromise = window.electronAPI.getVideoTitle(url);
+      
+      // Wait for both to complete
+      const [duration, title] = await Promise.all([
+        durationPromise.catch(err => {
+          console.error("Error fetching duration:", err);
+          return 0;
+        }),
+        titlePromise.catch(err => {
+          console.error("Error fetching title:", err);
+          return null;
+        })
+      ]);
+      
+      // Store the video duration
+      this.state.videoDurationSeconds = duration;
+      const formattedDuration = Utils.formatTimeFromSeconds(this.state.videoDurationSeconds);
+      
+      // Display the duration
+      elements.duration.textContent = formattedDuration;
+      
+      // Handle the title (truncate to 8 words)
+      if (title) {
+        // Store full title
+        this.videoTitle = title;
+        
+        // Decode HTML entities (like &amp; to &)
+        const decodeEntities = (text) => {
+          const textArea = document.createElement('textarea');
+          textArea.innerHTML = text;
+          return textArea.value;
+        };
+        
+        const decodedTitle = decodeEntities(title);
+        
+        // If name is longer than 8 words, truncate without adding extension
+        const words = decodedTitle.split(' ');
+        let truncatedTitle;
+        if (words.length > 8) {
+          // Simply cut off at 8 words without extension
+          truncatedTitle = words.slice(0, 8).join(' ');
+        } else {
+          truncatedTitle = decodedTitle;
+        }
+        
+        // Update the video name element
+        elements.videoName.textContent = truncatedTitle;
+      } else {
+        elements.videoName.textContent = 'Unknown.mp4';
+      }
+      
+      // Update all clips to use the full video duration for their end time if not set
+      this.state.clips.forEach(clip => {
+        if (clip.endTime === 0 || clip.endTime > this.state.videoDurationSeconds) {
+          clip.endTime = this.state.videoDurationSeconds;
+        }
+      });
+      
+      // Setup the slider with the duration
       this.slider.setupTickMarks(this.state.videoDurationSeconds);
+      
+      // Update the end input field
       document.getElementById('end').value = Utils.formatTimeFromSeconds(this.state.videoDurationSeconds);
+      
+      // Update the multi-clip UI
+      this.slider.setupMultiClips(this.state.clips, this.state.activeClipId);
+      this.updateClipSelectionUI();
+      
       elements.container.style.pointerEvents = 'auto';
       elements.loading.classList.add('hidden');
       this.logOutput(`Video duration: ${Utils.formatTimeFromSeconds(this.state.videoDurationSeconds)}`);
@@ -226,6 +335,527 @@ class VideoDownloader {
     }
   }
 
+  addClip() {
+    // Generate a new color for the clip
+    const clipColors = [
+      '#10B981', // Default green (accent-500)
+      '#3B82F6', // Blue
+      '#8B5CF6', // Purple
+      '#EC4899', // Pink
+      '#F59E0B', // Amber
+      '#EF4444'  // Red
+    ];
+    
+    // Check if any existing clip covers the full or near-full duration
+    const duration = this.state.videoDurationSeconds || 0;
+    
+    // Only reject if a clip covers more than 95% of the total duration
+    // This allows adding clips once the user has adjusted a previously full-duration clip
+    const minSpaceNeeded = Math.max(Math.floor(duration * 0.05), 3); // Need at least 5% of duration or 3 seconds
+    
+    // Check if there's enough space to add another clip
+    let hasEnoughSpace = false;
+    
+    // Check start of video to first clip
+    if (this.state.clips.length > 0) {
+      const firstClip = this.state.clips.reduce((earliest, clip) => 
+        clip.startTime < earliest.startTime ? clip : earliest, this.state.clips[0]);
+      
+      if (firstClip.startTime >= minSpaceNeeded) {
+        hasEnoughSpace = true;
+      }
+    }
+    
+    // Check between clips
+    for (let i = 0; i < this.state.clips.length - 1; i++) {
+      // Sort clips by start time to check gaps between them
+      const sortedClips = [...this.state.clips].sort((a, b) => a.startTime - b.startTime);
+      const gap = sortedClips[i+1].startTime - sortedClips[i].endTime;
+      if (gap >= minSpaceNeeded) {
+        hasEnoughSpace = true;
+        break;
+      }
+    }
+    
+    // Check end of last clip to end of video
+    if (this.state.clips.length > 0) {
+      const lastClip = this.state.clips.reduce((latest, clip) => 
+        clip.endTime > latest.endTime ? clip : latest, this.state.clips[0]);
+      
+      if (duration - lastClip.endTime >= minSpaceNeeded) {
+        hasEnoughSpace = true;
+      }
+    }
+    
+    if (!hasEnoughSpace) {
+      this.logOutput('Not enough space to add another clip. Please adjust existing clips to make room.', 'text-red-500');
+      return;
+    }
+    
+    const newClipId = this.state.clips.length + 1;
+    const colorIndex = (newClipId - 1) % clipColors.length;
+    
+    // Get the end time of the previous clip
+    const previousClip = this.state.clips[this.state.clips.length - 1];
+    
+    // Calculate bubble width in time units - use approximately 5% of duration or minimum 3 seconds
+    const bubbleWidthInSeconds = Math.max(Math.floor(duration * 0.05), 3);
+    
+    // Add spacing after previous clip (at least a bubble's width)
+    const startTime = previousClip ? 
+      Math.min(previousClip.endTime + bubbleWidthInSeconds, duration - 10) : 0;
+    
+    // Calculate a sensible end time (either video end or start + 10% of video duration)
+    const defaultClipDuration = Math.max(Math.floor(duration * 0.1), 5); // At least 5 seconds
+    const endTime = Math.min(startTime + defaultClipDuration, duration);
+    
+    // Make sure we still have room for this clip
+    if (startTime >= duration - 2) {
+      this.logOutput('No more room for additional clips', 'text-red-500');
+      return;
+    }
+    
+    // Add a new clip to the array
+    this.state.clips.push({
+      id: newClipId,
+      startTime: startTime,
+      endTime: endTime,
+      color: clipColors[colorIndex]
+    });
+    
+    // Set the new clip as active
+    this.state.activeClipId = newClipId;
+    
+    // Update the slider to show the new clip
+    this.slider.setupMultiClips(this.state.clips, this.state.activeClipId);
+    
+    // Update the clip selection and length UI
+    this.updateClipSelectionUI();
+  }
+  
+  setActiveClip(clipId) {
+    this.state.activeClipId = clipId;
+    
+    // Update the slider to highlight the active clip
+    this.slider.setActiveClip(clipId);
+    
+    // Update the UI to show active clip info
+    this.updateClipSelectionUI();
+    
+    // Update the manual input fields for the active clip
+    const activeClip = this.state.clips.find(clip => clip.id === clipId);
+    if (activeClip) {
+      document.getElementById('start').value = Utils.formatTimeFromSeconds(activeClip.startTime);
+      document.getElementById('end').value = Utils.formatTimeFromSeconds(activeClip.endTime);
+      document.getElementById('videoDurationDisplay').textContent = 
+        Utils.formatTimeFromSeconds(activeClip.endTime - activeClip.startTime);
+    }
+  }
+  
+  updateClipSelectionUI() {
+    // Update clip selection UI elements
+    const clipSelectionContainer = document.getElementById('clipSelectionContainer');
+    const videoDurationDisplay = document.getElementById('videoDurationDisplay');
+    if (!clipSelectionContainer) return;
+    
+    // Update header text based on number of clips
+    this.updateClipHeaderText();
+    
+    // Always hide the original videoDurationDisplay element
+    if (videoDurationDisplay) {
+      videoDurationDisplay.style.display = 'none';
+    }
+    
+    // Configure container for clip boxes regardless of clip count
+    clipSelectionContainer.style.display = 'flex';
+    clipSelectionContainer.style.flexDirection = 'row';
+    clipSelectionContainer.style.flexWrap = 'wrap';
+    clipSelectionContainer.style.gap = '8px';
+    clipSelectionContainer.style.marginTop = '0';
+    clipSelectionContainer.style.width = '100%';
+    
+    // Ensure proper coloring for single clips
+    if (this.state.clips.length === 1) {
+      // Update color to default green
+      this.state.clips[0].color = '#10B981';
+      
+      // Update the slider elements directly to ensure proper coloring
+      const startHandle = document.getElementById('startHandle');
+      const endHandle = document.getElementById('endHandle');
+      const rangeInner = document.getElementById('rangeSliderInner');
+      
+      if (startHandle && endHandle && rangeInner) {
+        startHandle.style.backgroundColor = '#10B981';
+        endHandle.style.backgroundColor = '#10B981';
+        rangeInner.style.backgroundColor = '#10B981';
+      }
+    }
+    
+    // Check if we need to rebuild the container or just update durations
+    if (clipSelectionContainer.children.length !== this.state.clips.length) {
+      // Clear and rebuild if the number of clips changed
+      clipSelectionContainer.innerHTML = '';
+      
+        // Add clip length information for each clip
+        this.state.clips.forEach(clip => {
+          // Create clip element with exact styling as specified
+          const clipEl = document.createElement('div');
+          clipEl.className = 'flex items-center relative';
+          clipEl.id = `clip-selection-${clip.id}`;
+          
+          // Apply exact styling as specified
+          clipEl.style.padding = '4px 8px';
+          clipEl.style.height = '24px';
+          clipEl.style.lineHeight = '20px';
+          clipEl.style.boxSizing = 'border-box';
+          clipEl.style.cursor = 'pointer';
+          clipEl.style.marginRight = '8px';
+          clipEl.style.marginBottom = '0px';
+          clipEl.style.display = 'inline-flex';
+          clipEl.style.flexShrink = '0';
+          clipEl.style.flexBasis = 'auto';
+          clipEl.style.minWidth = 'min-content';
+          
+          // Add color indicator
+          const colorIndicator = document.createElement('div');
+          colorIndicator.className = 'w-3 h-3 rounded-full mr-2';
+          colorIndicator.style.backgroundColor = clip.color;
+          clipEl.appendChild(colorIndicator);
+          
+          // Add clip info text with separate duration span for easy updates
+          const clipText = document.createElement('span');
+          clipText.className = `text-xs ${clip.id === this.state.activeClipId ? 'text-white' : 'text-gray-400 font-bold'}`;
+          
+          // Create elements for label and duration for easy updating
+          const clipLabel = document.createElement('span');
+          clipLabel.textContent = `Clip ${clip.id} Length: `;
+          
+          const clipDuration = document.createElement('span');
+          clipDuration.className = 'clip-duration text-white font-bold';
+          clipDuration.id = `clip-duration-${clip.id}`;
+          clipDuration.textContent = Utils.formatTimeFromSeconds(clip.endTime - clip.startTime);
+          
+          clipText.appendChild(clipLabel);
+          clipText.appendChild(clipDuration);
+          clipEl.appendChild(clipText);
+          
+          // Add delete button (x icon) for all clips with specific clip ID in closure
+          const deleteButton = document.createElement('button');
+          deleteButton.className = 'ml-2 text-gray-400 hover:text-red-500 focus:outline-none';
+          deleteButton.innerHTML = '×';
+          deleteButton.style.fontSize = '16px';
+          deleteButton.style.lineHeight = '16px';
+          deleteButton.style.fontWeight = 'bold';
+          deleteButton.style.paddingLeft = '4px';
+          deleteButton.style.paddingRight = '4px';
+          
+          // Store clip ID in the button's data attribute
+          deleteButton.dataset.clipId = clip.id;
+          
+          // Stop propagation and prevent default to avoid triggering other actions
+          deleteButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            // Get the specific clip ID from the dataset
+            const clipIdToRemove = parseInt(e.currentTarget.dataset.clipId, 10);
+            this.logOutput(`Removing clip ${clipIdToRemove}`, 'text-accent-500');
+            this.removeClip(clipIdToRemove);
+            return false; // Extra precaution to prevent event bubbling
+          });
+          
+          // Set button type to "button" to prevent form submission
+          deleteButton.type = "button";
+          
+          clipEl.appendChild(deleteButton);
+          
+          // Make it clickable to select the clip
+          clipEl.style.cursor = 'pointer';
+          clipEl.addEventListener('click', () => this.setActiveClip(clip.id));
+          
+          // Highlight the active clip with background color
+          if (clip.id === this.state.activeClipId) {
+            clipEl.classList.add('bg-dark-700', 'rounded');
+          }
+          
+          clipSelectionContainer.appendChild(clipEl);
+        });
+    } else {
+      // Just update durations and active state for each clip
+      this.state.clips.forEach(clip => {
+        const clipEl = document.getElementById(`clip-selection-${clip.id}`);
+        const clipDuration = document.getElementById(`clip-duration-${clip.id}`);
+        
+        if (clipEl && clipDuration) {
+          // Update duration text
+          clipDuration.textContent = Utils.formatTimeFromSeconds(clip.endTime - clip.startTime);
+          
+          // Update active state
+          const clipText = clipEl.querySelector('span');
+          if (clipText) {
+            clipText.className = `text-xs ${clip.id === this.state.activeClipId ? 'text-white' : 'text-gray-400 font-bold'}`;
+          }
+          
+          // Ensure all durations have white text
+          clipDuration.classList.remove('text-accent-500');
+          clipDuration.classList.add('text-white', 'font-bold');
+          
+          // Update highlight - ensure clip box gets background when active
+          if (clip.id === this.state.activeClipId) {
+            clipEl.classList.add('bg-dark-700', 'rounded');
+          } else {
+            clipEl.classList.remove('bg-dark-700', 'rounded');
+          }
+        }
+      });
+    }
+  }
+  
+  removeClip(clipId) {
+    // Debug logging
+    console.log(`Removing clip with ID: ${clipId}`, this.state.clips.map(c => c.id));
+    
+    // Find the index of the clip to remove
+    const clipIndex = this.state.clips.findIndex(clip => clip.id === clipId);
+    if (clipIndex === -1) {
+      console.log(`Clip with ID ${clipId} not found`);
+      return;
+    }
+    
+    // Get the clip to remove
+    const removedClip = this.state.clips[clipIndex];
+    console.log(`Found clip at index ${clipIndex}: `, removedClip);
+    
+    // Make a copy of the clips array before modifying it
+    const updatedClips = [...this.state.clips];
+    updatedClips.splice(clipIndex, 1);
+    this.state.clips = updatedClips;
+    
+    console.log(`After removal: `, this.state.clips.map(c => c.id));
+    
+    // If we removed all clips, create a new default clip
+    if (this.state.clips.length === 0) {
+      this.state.clips.push({ 
+        id: 1, 
+        startTime: 0, 
+        endTime: this.state.videoDurationSeconds || 0, 
+        color: '#10B981' 
+      });
+      this.state.activeClipId = 1;
+    } else {
+      // Renumber and reassign colors for remaining clips
+      const clipColors = [
+        '#10B981', // Default green (accent-500)
+        '#3B82F6', // Blue
+        '#8B5CF6', // Purple
+        '#EC4899', // Pink
+        '#F59E0B', // Amber
+        '#EF4444'  // Red
+      ];
+      
+      this.state.clips.forEach((clip, index) => {
+        const newId = index + 1;
+        const colorIndex = (newId - 1) % clipColors.length; // Reassign color based on new ID
+        
+        // If this was the active clip, update activeClipId
+        if (clip.id === this.state.activeClipId) {
+          this.state.activeClipId = newId;
+        }
+        
+        // Update ID and color
+        clip.id = newId;
+        clip.color = clipColors[colorIndex]; // Ensure colors match new sequence
+      });
+      
+      // Ensure first clip is always default green
+      if (this.state.clips.length === 1) {
+        this.state.clips[0].color = '#10B981';
+      }
+      
+      // If the removed clip was active, set the first clip as active
+      if (this.state.activeClipId === clipId) {
+        this.state.activeClipId = 1;
+      }
+    }
+    
+    // Special case: If we're back to a single clip, reset to default state
+    if (this.state.clips.length === 1) {
+      // Reset clip header text
+      const clipLengthLabel = document.querySelector('.flex.justify-between.items-center .flex.items-center label');
+      if (clipLengthLabel) {
+        clipLengthLabel.textContent = 'Clip Length';
+      }
+      
+      // Reset the slider to default single clip display
+      this.slider.setupDefault();
+      
+      // Update clip selection UI
+      this.updateClipSelectionUI();
+    } else {
+      // Re-setup the slider with the renumbered clips
+      this.slider.setupMultiClips(this.state.clips, this.state.activeClipId);
+      
+      // Update the UI
+      this.updateClipSelectionUI();
+    }
+    
+    // Log the removal
+    this.logOutput(`Removed clip ${clipId}`, 'text-accent-500');
+    console.log(`Final clips after renumbering: `, this.state.clips.map(c => c.id));
+  }
+  
+  updateClipHeaderText() {
+    // Get the clip length row directly by ID
+    const clipLengthRow = document.getElementById('clipLengthRow');
+    if (!clipLengthRow) {
+      console.error('Clip length row not found - cannot position clip boxes');
+      return;
+    }
+    
+    // Get the add clip button
+    const addClipBtn = document.getElementById('addClipBtn');
+    if (!addClipBtn) {
+      console.error('Add Clip button not found');
+      return;
+    }
+    
+    // Store button height for consistent sizing across methods
+    this.addClipBtnHeight = addClipBtn.offsetHeight || 28; // Default to 28px
+    
+    // Get the clip selection container and duration display
+    const clipSelectionContainer = document.getElementById('clipSelectionContainer');
+    const durationDisplay = document.getElementById('videoDurationDisplay');
+    if (!clipSelectionContainer || !durationDisplay) {
+      console.error('Required UI elements not found');
+      return;
+    }
+    
+    // Always hide the videoDurationDisplay - we'll use clip boxes instead
+    durationDisplay.style.display = 'none';
+    
+    // Set a fixed height for the Add Clip button to prevent it from changing height
+    addClipBtn.style.height = '24px';
+    addClipBtn.style.lineHeight = '20px';
+    addClipBtn.style.boxSizing = 'border-box';
+    
+    // Always create a wrapper for clip boxes regardless of clip count
+    let wrapper = document.getElementById('clipBoxWrapper');
+    if (!wrapper) {
+      wrapper = document.createElement('div');
+      wrapper.id = 'clipBoxWrapper';
+      wrapper.style.display = 'flex';  // Changed from inline-flex to flex
+      wrapper.style.flexDirection = 'row';
+      wrapper.style.flexWrap = 'wrap';
+      wrapper.style.alignItems = 'center';
+      wrapper.style.marginLeft = '0px';
+      wrapper.style.minHeight = '24px';  // Match button height
+      wrapper.style.paddingLeft = '10px';
+    }
+    
+    // Style the clip selection container for horizontal layout
+    clipSelectionContainer.style.display = 'flex';  // Changed from inline-flex to flex
+    clipSelectionContainer.style.flexDirection = 'row';
+    clipSelectionContainer.style.flexWrap = 'wrap';
+    clipSelectionContainer.style.alignItems = 'center';
+    clipSelectionContainer.style.margin = '0';
+    clipSelectionContainer.style.padding = '0';
+    clipSelectionContainer.style.width = '100%';  // Allow it to take up full width of wrapper
+    
+    // Style individual clip items with exact specifications
+    const clipItems = clipSelectionContainer.querySelectorAll('[id^="clip-selection-"]');
+    clipItems.forEach(item => {
+      item.style.display = 'flex';
+      item.style.marginRight = '8px';
+      item.style.marginBottom = '0px';
+      item.style.padding = '4px 8px';
+      item.style.height = '24px';
+      item.style.lineHeight = '20px';
+      item.style.boxSizing = 'border-box';
+      item.style.cursor = 'pointer';
+      item.style.alignItems = 'center';
+      item.style.flexShrink = '0';
+      item.style.flexBasis = 'auto';
+    });
+    
+    // Remove clip selection container from its current parent
+    if (clipSelectionContainer.parentNode && clipSelectionContainer.parentNode !== wrapper) {
+      clipSelectionContainer.parentNode.removeChild(clipSelectionContainer);
+    }
+    
+    // Add selection container to wrapper
+    if (clipSelectionContainer.parentNode !== wrapper) {
+      wrapper.appendChild(clipSelectionContainer);
+    }
+    
+    // Create a container for the button and clip boxes to control layout
+    const buttonAndClipsContainer = document.getElementById('buttonAndClipsContainer');
+    if (!buttonAndClipsContainer) {
+      // Create a flex container to hold both the button and clip boxes
+      const container = document.createElement('div');
+      container.id = 'buttonAndClipsContainer';
+      container.style.display = 'flex';
+      container.style.flexWrap = 'wrap';
+      container.style.alignItems = 'center';
+      
+      // Ensure the row doesn't collapse when clips wrap
+      container.style.minHeight = '24px';
+      
+      // Get the parent of the Add Clip button
+      const btnParent = addClipBtn.parentNode;
+      
+      // Remove clip wrapper from DOM if it exists somewhere else
+      if (wrapper.parentNode) {
+        wrapper.parentNode.removeChild(wrapper);
+      }
+      
+      // Move the Add Clip button into the new container
+      if (addClipBtn.parentNode) {
+        addClipBtn.parentNode.removeChild(addClipBtn);
+      }
+      
+      // Create standalone divider
+      const divider = document.createElement('div');
+      divider.style.width = '2px';
+      divider.style.height = '20px';
+      divider.style.backgroundColor = 'rgb(55, 65, 81)';
+      divider.style.margin = '0 0 0 10px';
+      
+      // Add button, divider, and wrapper to the container
+      container.appendChild(addClipBtn);
+      container.appendChild(divider);
+      container.appendChild(wrapper);
+      
+      // Add the container to the original parent
+      btnParent.appendChild(container);
+    } else {
+      // Container exists, ensure divider and wrapper are inside it
+      const existingDivider = buttonAndClipsContainer.querySelector('div:not(#clipBoxWrapper):not(#addClipBtn)');
+      
+      // Create divider if it doesn't exist
+      if (!existingDivider) {
+        const divider = document.createElement('div');
+        divider.style.width = '2px';
+        divider.style.height = '20px';
+        divider.style.backgroundColor = 'rgb(55, 65, 81)';
+        divider.style.margin = '0 10px';
+        
+        // Insert divider after the button
+        if (addClipBtn.nextSibling) {
+          buttonAndClipsContainer.insertBefore(divider, addClipBtn.nextSibling);
+        } else {
+          buttonAndClipsContainer.appendChild(divider);
+        }
+      }
+      
+      // Ensure wrapper is inside container
+      if (wrapper.parentNode !== buttonAndClipsContainer) {
+        if (wrapper.parentNode) {
+          wrapper.parentNode.removeChild(wrapper);
+        }
+        buttonAndClipsContainer.appendChild(wrapper);
+      }
+    }
+  }
+
   handleSubmit(e) {
     e.preventDefault();
     
@@ -240,19 +870,32 @@ class VideoDownloader {
     this.switchToProgressState();
 
     if (typeof url !== 'string') url = String(url);
-    const startPercent = parseFloat(this.slider.startHandle.style.left) || 0;
-    const endPercent = parseFloat(this.slider.endHandle.style.left) || 100;
-    const startSeconds = Math.round((startPercent / 100) * this.state.videoDurationSeconds);
-    const endSeconds = Math.round((endPercent / 100) * this.state.videoDurationSeconds);
-    const start = Utils.formatTimeFromSeconds(startSeconds);
-    const end = Utils.formatTimeFromSeconds(endSeconds);
-
-    document.getElementById('start').value = start;
-    document.getElementById('end').value = end;
     const downloadLocation = document.getElementById('downloadLocation').value;
-
+    
+    // Process all clips
     this.state.downloadStartTime = new Date();
-    window.electronAPI.downloadVideo({ url, start, end, downloadLocation });
+    
+    // Create a batch of clip download jobs
+    const clipJobs = this.state.clips.map(clip => {
+      const start = Utils.formatTimeFromSeconds(clip.startTime);
+      const end = Utils.formatTimeFromSeconds(clip.endTime);
+      return { 
+        url, 
+        start, 
+        end, 
+        downloadLocation,
+        clipId: clip.id
+      };
+    });
+    
+    // Send all clips for processing
+    window.electronAPI.downloadVideo({ 
+      url, 
+      downloadLocation,
+      clips: clipJobs
+    });
+    
+    this.logOutput(`Processing ${clipJobs.length} clip${clipJobs.length > 1 ? 's' : ''}...`);
   }
 
   handleDownloadUpdate(update) {
@@ -265,7 +908,14 @@ class VideoDownloader {
       ? Utils.formatTimeFromSeconds(data.duration)
       : Utils.formatTimeFromSeconds(this.state.videoDurationSeconds || 0);
 
-    document.getElementById('downloadSuccessMessage').textContent = `Video successfully downloaded! (${finalDuration})`;
+    let successMessage = `Video successfully downloaded! (${finalDuration})`;
+    
+    // If multiple clips were processed, mention that
+    if (data.totalClips && data.totalClips > 1) {
+      successMessage = `${data.totalClips} clips successfully downloaded! (${finalDuration})`;
+    }
+
+    document.getElementById('downloadSuccessMessage').textContent = successMessage;
     document.getElementById('downloadedVideoDuration').textContent = finalDuration;
     document.getElementById('statusText').textContent = `Download complete - Duration: ${finalDuration}`;
     this.progress.setProgress(100);
