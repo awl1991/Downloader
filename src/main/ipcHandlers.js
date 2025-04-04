@@ -15,9 +15,9 @@ function getResourcePath(resource) {
 // Send a log message to the renderer process
 function logMessage(mainWindow, message) {
   if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send('download-update', `[YT-DLP] ${message}`);
+    mainWindow.webContents.send('download-update', `[OUTPUT] ${message}`);
   }
-  logToFile(`[YT-DLP] ${message}`);
+  logToFile(`[OUTPUT] ${message}`);
 }
 
 // Send an error message to the renderer process
@@ -61,8 +61,8 @@ async function getVideoDuration(mainWindow, ffprobePath, filePath) {
 }
 
 async function fetchDuration(mainWindow, ytDlpPath, url) {
-  logMessage(mainWindow, `Starting to fetch duration using yt-dlp at: ${ytDlpPath}`);
-  logToFile(`Attempting to use yt-dlp at: ${ytDlpPath}`);
+  // logMessage(mainWindow, `Starting to fetch duration using yt-dlp at: ${ytDlpPath}`);
+  // logToFile(`Attempting to use yt-dlp at: ${ytDlpPath}`);
   
   // Check if the ytDlpPath exists
   if (!fs.existsSync(ytDlpPath)) {
@@ -89,22 +89,22 @@ async function fetchDuration(mainWindow, ytDlpPath, url) {
     let duration = '';
     ytDlp.stdout.on('data', (data) => {
       const output = data.toString().trim();
-      logMessage(mainWindow, `yt-dlp stdout: ${output}`);
+      logMessage(mainWindow, `→ stdout: ${output}`);
       duration = output;
     });
     
     ytDlp.stderr.on('data', (data) => {
       const errorOutput = data.toString().trim();
-      logError(mainWindow, `yt-dlp stderr: ${errorOutput}`);
+      logError(mainWindow, `→ stderr: ${errorOutput}`);
     });
     
     ytDlp.on('error', (err) => {
-      logError(mainWindow, `yt-dlp spawn error: ${err.message}`);
+      logError(mainWindow, `→ spawn error: ${err.message}`);
       reject(new Error(`Failed to spawn yt-dlp process: ${err.message}`));
     });
     
     ytDlp.on('close', (code) => {
-      logMessage(mainWindow, `yt-dlp process exited with code: ${code}`);
+      logMessage(mainWindow, `→ process exited with code: ${code}`);
       
       if (code === 0 && !isNaN(parseFloat(duration))) {
         const dur = parseFloat(duration);
@@ -324,7 +324,7 @@ async function invokeYtdlpDownload(mainWindow, options, status) {
     url // The Rumble URL
   ];
   const ytDlp = spawn(status.ytDlpPath, ytdlpArgs, { shell: false });
-  ytDlp.stdout.on('data', (data) => logMessage(mainWindow, `yt-dlp: ${data.toString().trim()}`));
+  ytDlp.stdout.on('data', (data) => logMessage(mainWindow, `⇊ ${data.toString().trim()}`));
   ytDlp.stderr.on('data', (data) => {
     const output = data.toString().trim();
     if (output.includes('ERROR') || output.includes('error') || output.includes('Failed') || output.includes('failed')) {

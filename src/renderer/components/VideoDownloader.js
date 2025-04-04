@@ -48,6 +48,12 @@ class VideoDownloader {
     this.resetFormFields(downloadLocation);
     this.resetClips();
     this.resetSlider();
+    
+    // Ensure clip duration is reset to 0 after slider setup
+    if (this.state.clips && this.state.clips.length > 0) {
+      this.state.clips[0].endTime = 0;
+    }
+    
     this.updateUIAfterClear(downloadLocation);
   }
 
