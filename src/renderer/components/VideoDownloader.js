@@ -738,7 +738,7 @@ class VideoDownloader {
         width: '2px',
         height: '20px',
         backgroundColor: 'rgb(55, 65, 81)',
-        margin: '0 0 0 10px'
+        margin: '2px 0 0 10px'
       });
       if (button.nextSibling) {
         container.insertBefore(divider, button.nextSibling);

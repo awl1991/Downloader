@@ -340,6 +340,17 @@ class RangeSlider {
     document.getElementById('end').value = Utils.formatTimeFromSeconds(activeClip.endTime);
     document.getElementById('videoDurationDisplay').textContent = 
       Utils.formatTimeFromSeconds(activeClip.endTime - activeClip.startTime);
+    
+    // Update the clip duration display for this specific clip
+    const clipDurationEl = document.getElementById(`clip-duration-${activeClip.id}`);
+    if (clipDurationEl) {
+      clipDurationEl.textContent = Utils.formatTimeFromSeconds(activeClip.endTime - activeClip.startTime);
+    }
+    
+    // Update the clip selection UI to reflect the changes
+    if (this.state && typeof this.state.updateClipSelectionUI === 'function') {
+      this.state.updateClipSelectionUI();
+    }
   }
 
   addEventListeners() {
@@ -418,6 +429,62 @@ class RangeSlider {
           }
           
           this.updateClipPositions(activeClip);
+          
+          // Update the clip duration display
+          const clipDurationEl = document.getElementById(`clip-duration-${activeClip.id}`);
+          if (clipDurationEl) {
+            clipDurationEl.textContent = Utils.formatTimeFromSeconds(activeClip.endTime - activeClip.startTime);
+          }
+          
+          // Update the main duration display
+          document.getElementById('videoDurationDisplay').textContent = 
+            Utils.formatTimeFromSeconds(activeClip.endTime - activeClip.startTime);
+          
+          // Update the clip selection UI to reflect changes
+          if (this.state && typeof this.state.updateClipSelectionUI === 'function') {
+            this.state.updateClipSelectionUI();
+          }
+        }
+      });
+    });
+
+    // Add change event listeners to capture arrow button changes
+    [this.startInput, this.endInput].forEach((input, i) => {
+      input.addEventListener('change', () => {
+        const timeArray = input.value.split(':').map(Number);
+        let seconds = 0;
+        if (timeArray.length === 3) seconds = timeArray[0] * 3600 + timeArray[1] * 60 + timeArray[2];
+        else if (timeArray.length === 2) seconds = timeArray[0] * 60 + timeArray[1];
+        else if (timeArray.length === 1) seconds = timeArray[0];
+
+        if (!isNaN(seconds) && this.duration > 0) {
+          const activeClip = this.state.clips.find(clip => clip.id === this.state.activeClipId);
+          if (!activeClip) return;
+          
+          if (i === 0) {
+            activeClip.startTime = Math.min(seconds, activeClip.endTime);
+            this.startTime = activeClip.startTime;
+          } else {
+            activeClip.endTime = Math.max(seconds, activeClip.startTime);
+            this.endTime = activeClip.endTime;
+          }
+          
+          this.updateClipPositions(activeClip);
+          
+          // Update the clip duration display
+          const clipDurationEl = document.getElementById(`clip-duration-${activeClip.id}`);
+          if (clipDurationEl) {
+            clipDurationEl.textContent = Utils.formatTimeFromSeconds(activeClip.endTime - activeClip.startTime);
+          }
+          
+          // Update the main duration display
+          document.getElementById('videoDurationDisplay').textContent = 
+            Utils.formatTimeFromSeconds(activeClip.endTime - activeClip.startTime);
+          
+          // Update the clip selection UI to reflect changes
+          if (this.state && typeof this.state.updateClipSelectionUI === 'function') {
+            this.state.updateClipSelectionUI();
+          }
         }
       });
     });
