@@ -467,12 +467,10 @@ class VideoDownloader {
     }
     
     // Configure container for clip boxes regardless of clip count
-    clipSelectionContainer.style.display = 'flex';
-    clipSelectionContainer.style.flexDirection = 'row';
-    clipSelectionContainer.style.flexWrap = 'wrap';
-    clipSelectionContainer.style.gap = '8px';
+    clipSelectionContainer.style.display = 'block'; // Changed to block to allow natural flow
     clipSelectionContainer.style.marginTop = '0';
     clipSelectionContainer.style.width = '100%';
+    clipSelectionContainer.style.overflow = 'hidden'; // To contain floated children
     
     // Ensure proper coloring for single clips
     if (this.state.clips.length === 1) {
@@ -510,11 +508,12 @@ class VideoDownloader {
           clipEl.style.boxSizing = 'border-box';
           clipEl.style.cursor = 'pointer';
           clipEl.style.marginRight = '8px';
-          clipEl.style.marginBottom = '0px';
+          clipEl.style.marginBottom = '0px'; // Added margin-bottom for spacing when wrapped
           clipEl.style.display = 'inline-flex';
           clipEl.style.flexShrink = '0';
           clipEl.style.flexBasis = 'auto';
           clipEl.style.minWidth = 'min-content';
+          clipEl.style.float = 'left'; // Added float to allow natural wrapping
           
           // Add color indicator
           const colorIndicator = document.createElement('div');
@@ -736,36 +735,34 @@ class VideoDownloader {
     addClipBtn.style.height = '24px';
     addClipBtn.style.lineHeight = '20px';
     addClipBtn.style.boxSizing = 'border-box';
+    addClipBtn.style.minWidth = '85px';
     
     // Always create a wrapper for clip boxes regardless of clip count
     let wrapper = document.getElementById('clipBoxWrapper');
     if (!wrapper) {
       wrapper = document.createElement('div');
       wrapper.id = 'clipBoxWrapper';
-      wrapper.style.display = 'flex';  // Changed from inline-flex to flex
-      wrapper.style.flexDirection = 'row';
-      wrapper.style.flexWrap = 'wrap';
-      wrapper.style.alignItems = 'center';
+      wrapper.style.display = 'block'; // Changed to block to allow natural flow
       wrapper.style.marginLeft = '0px';
       wrapper.style.minHeight = '24px';  // Match button height
       wrapper.style.paddingLeft = '10px';
+      wrapper.style.width = 'calc(100% - 10px)'; // Take up remaining width
     }
     
     // Style the clip selection container for horizontal layout
-    clipSelectionContainer.style.display = 'flex';  // Changed from inline-flex to flex
-    clipSelectionContainer.style.flexDirection = 'row';
-    clipSelectionContainer.style.flexWrap = 'wrap';
+    clipSelectionContainer.style.display = 'block'; // Changed to block to allow natural flow
     clipSelectionContainer.style.alignItems = 'center';
     clipSelectionContainer.style.margin = '0';
     clipSelectionContainer.style.padding = '0';
     clipSelectionContainer.style.width = '100%';  // Allow it to take up full width of wrapper
+    clipSelectionContainer.style.overflow = 'hidden'; // Added to contain floated children
     
     // Style individual clip items with exact specifications
     const clipItems = clipSelectionContainer.querySelectorAll('[id^="clip-selection-"]');
     clipItems.forEach(item => {
       item.style.display = 'flex';
       item.style.marginRight = '8px';
-      item.style.marginBottom = '0px';
+      item.style.marginBottom = '0px'; // Added margin-bottom for spacing when wrapped
       item.style.padding = '4px 8px';
       item.style.height = '24px';
       item.style.lineHeight = '20px';
@@ -774,6 +771,7 @@ class VideoDownloader {
       item.style.alignItems = 'center';
       item.style.flexShrink = '0';
       item.style.flexBasis = 'auto';
+      item.style.float = 'left'; // Added float to allow natural wrapping
     });
     
     // Remove clip selection container from its current parent
@@ -789,12 +787,12 @@ class VideoDownloader {
     // Create a container for the button and clip boxes to control layout
     const buttonAndClipsContainer = document.getElementById('buttonAndClipsContainer');
     if (!buttonAndClipsContainer) {
-      // Create a flex container to hold both the button and clip boxes
+      // Create a container to hold both the button and clip boxes
       const container = document.createElement('div');
       container.id = 'buttonAndClipsContainer';
-      container.style.display = 'flex';
-      container.style.flexWrap = 'wrap';
-      container.style.alignItems = 'center';
+      container.style.display = 'flex'; // Keep flex for button and divider alignment
+      container.style.flexWrap = 'nowrap'; // Don't wrap the button and divider
+      container.style.alignItems = 'flex-start';
       
       // Ensure the row doesn't collapse when clips wrap
       container.style.minHeight = '24px';
