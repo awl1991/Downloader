@@ -83,6 +83,7 @@ async function fetchDuration(mainWindow, ytDlpPath, url) {
       '--no-check-certificate',
       '--geo-bypass',
       '--extractor-retries', '3',
+      '--progress',
       url
     ], { shell: false });
 
