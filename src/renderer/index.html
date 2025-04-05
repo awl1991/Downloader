@@ -83,7 +83,19 @@
                         <form id="downloadForm" class="space-y-5">
                             <!-- Form content unchanged -->
                             <div>
-                                <label class="block text-sm font-medium text-gray-300 mb-1">Video URL</label>
+                                <div class="flex items-center space-x-2 mb-1">
+                                    <label class="text-sm font-medium text-gray-300">Video URL</label>
+                                    <div id="durationLoading" class="hidden flex items-center space-x-2">
+                                        <div class="animate-pulse flex space-x-2">
+                                            <div class="h-2 w-2 bg-accent-500 rounded-full"></div>
+                                            <div class="h-2 w-2 bg-accent-500 rounded-full animation-delay-200">
+                                            </div>
+                                            <div class="h-2 w-2 bg-accent-500 rounded-full animation-delay-400">
+                                            </div>
+                                        </div>
+                                        <span class="text-xs text-gray-400">Getting video duration...</span>
+                                    </div>
+                                </div>
                                 <div class="relative rounded-md shadow-sm">
                                     <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400"
@@ -116,16 +128,6 @@
                                             <span class="text-xs text-gray-400 mr-2">Duration:</span>
                                             <span id="videoDuration"
                                                 class="text-xs font-mono bg-dark-700 px-2 py-1 rounded text-accent-500">--:--:--</span>
-                                        </div>
-                                        <div id="durationLoading" class="hidden flex items-center space-x-2 my-1">
-                                            <div class="animate-pulse flex space-x-2">
-                                                <div class="h-2 w-2 bg-accent-500 rounded-full"></div>
-                                                <div class="h-2 w-2 bg-accent-500 rounded-full animation-delay-200">
-                                                </div>
-                                                <div class="h-2 w-2 bg-accent-500 rounded-full animation-delay-400">
-                                                </div>
-                                            </div>
-                                            <span class="text-xs text-gray-400">Getting video duration...</span>
                                         </div>
                                     </div>
                                         <div class="space-y-1">

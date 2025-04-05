@@ -48,15 +48,55 @@ export default class ClipManager {
     const newClipId = this.app.state.clips.length + 1;
     const colorIndex = (newClipId - 1) % clipColors.length;
     const duration = this.app.state.videoDurationSeconds || 0;
-    const bubbleWidthInSeconds = Math.max(Math.floor(duration * 0.05), 3);
+    
+    // Calculate bubble width for spacing purposes only
+    const bubbleWidthInSeconds = Math.max(duration * 0.05, 3);
+    
+    // Get previous clip
     const previousClip = this.app.state.clips[this.app.state.clips.length - 1];
-    const startTime = previousClip ? Math.min(previousClip.endTime + bubbleWidthInSeconds, duration - 10) : 0;
-    const defaultClipDuration = Math.max(Math.floor(duration * 0.1), 5);
-    const endTime = Math.min(startTime + defaultClipDuration, duration);
-    if (startTime >= duration - 2) {
-      this.app.logger.logOutput('No more room for additional clips', 'text-red-500');
+    
+    // Set clip duration to exactly 10% of the total video duration
+    const clipDurationInSeconds = duration * 0.1;
+    
+    // Calculate start position: half bubble width after previous clip
+    let startTime = 0;
+    if (previousClip) {
+      startTime = previousClip.endTime + (bubbleWidthInSeconds / 2);
+      
+      // Ensure we don't overlap with previous clip
+      if (startTime <= previousClip.endTime) {
+        startTime = previousClip.endTime + (bubbleWidthInSeconds / 2);
+      }
+    }
+    
+    // Check if there's enough room at the end of the video for the clip
+    if (startTime + clipDurationInSeconds > duration) {
+      // Not enough space at calculated position
+      if (duration >= clipDurationInSeconds) {
+        // If video is long enough, position at the end minus the clip duration
+        startTime = Math.max(0, duration - clipDurationInSeconds);
+        
+        // If this would cause overlap, there's no room for another clip
+        if (previousClip && startTime <= previousClip.endTime) {
+          this.app.logger.logOutput('Not enough space for another clip', 'text-red-500');
+          return null;
+        }
+      } else {
+        // Video is shorter than the calculated clip duration
+        this.app.logger.logOutput('Video is too short for another clip', 'text-red-500');
+        return null;
+      }
+    }
+    
+    // Set end time to exactly the calculated duration after start time (or end of video if not enough room)
+    const endTime = Math.min(startTime + clipDurationInSeconds, duration);
+    
+    // Final check - ensure we have enough space and aren't overlapping
+    if (endTime - startTime < 1 || (previousClip && startTime < previousClip.endTime)) {
+      this.app.logger.logOutput('Cannot add clip - not enough space', 'text-red-500');
       return null;
     }
+    
     return { id: newClipId, startTime, endTime, color: clipColors[colorIndex] };
   }
 
@@ -214,6 +254,19 @@ export default class ClipManager {
   removeClip(clipId) {
     const clipIndex = this.app.state.clips.findIndex(clip => clip.id === clipId);
     if (clipIndex === -1) return;
+    
+    // Special case: if this is the only clip, reset it to full duration instead of removing
+    if (this.app.state.clips.length === 1 && this.app.state.videoDurationSeconds > 0) {
+      this.app.state.clips[0].startTime = 0;
+      this.app.state.clips[0].endTime = this.app.state.videoDurationSeconds;
+      this.app.slider.setupMultiClips(this.app.state.clips, this.app.state.activeClipId);
+      this.updateClipSelectionUI();
+      this.updateManualInputs(this.app.state.clips[0].id);
+      this.app.logger.logOutput(`Reset clip to full video duration`, 'text-accent-500');
+      return;
+    }
+    
+    // Normal case: remove the clip
     this.app.state.clips.splice(clipIndex, 1);
     this.handleClipRemoval();
     this.app.logger.logOutput(`Removed clip ${clipId}`, 'text-accent-500');

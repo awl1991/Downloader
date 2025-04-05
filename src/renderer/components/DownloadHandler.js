@@ -4,6 +4,7 @@ import Utils from '../utils/utils.js';
 export default class DownloadHandler {
     constructor(app) {
         this.app = app;
+        this.clipDurations = {}; // Store durations for each clip
     }
 
     // ... (other methods unchanged)
@@ -25,13 +26,22 @@ export default class DownloadHandler {
     startDownload(url) {
         const downloadLocation = document.getElementById('downloadLocation').value;
         this.app.state.downloadStartTime = new Date();
-        const clipJobs = this.app.state.clips.map(clip => ({
-            url,
-            start: Utils.formatTimeFromSeconds(clip.startTime),
-            end: Utils.formatTimeFromSeconds(clip.endTime),
-            downloadLocation,
-            clipId: clip.id
-        }));
+        
+        // Initialize clipDurations with only the expected clip IDs
+        this.clipDurations = {};
+        const clipJobs = this.app.state.clips.map(clip => {
+            // Setup empty placeholders for each expected clip ID
+            this.clipDurations[clip.id] = null;
+            
+            return {
+                url,
+                start: Utils.formatTimeFromSeconds(clip.startTime),
+                end: Utils.formatTimeFromSeconds(clip.endTime),
+                downloadLocation,
+                clipId: clip.id
+            };
+        });
+        
         if (!window.electronAPI || !window.electronAPI.downloadVideo) {
             console.error('Electron API not available');
             this.app.logger.logOutput('Error: Electron API not available', 'text-red-500');
@@ -50,15 +60,91 @@ export default class DownloadHandler {
             (update.includes('Download finished') || update.includes('[TRIMMED_DURATION]')) ? 'text-accent-500' : '';
         this.app.logger.logOutput(update, className);
         this.updateProgressFromMessage(update);
+        
+        // Extract clip ID and duration only from clear clip-related duration messages
+        if (update.includes('Trimmed clip') && update.includes('duration')) {
+            const durationMatch = update.match(/Trimmed clip (\d+) duration: ([\d.]+) seconds/);
+            if (durationMatch) {
+                const clipId = parseInt(durationMatch[1]);
+                const seconds = parseFloat(durationMatch[2]);
+                
+                // Only store duration if this is a valid clip ID that exists in our initial structure
+                if (clipId in this.clipDurations) {
+                    this.clipDurations[clipId] = seconds;
+                }
+            }
+        } 
+        // Handle TRIMMED_DURATION tag with clear clip ID in message
+        else if (update.includes('[TRIMMED_DURATION]')) {
+            const durationMatch = update.match(/\[TRIMMED_DURATION\]([\d.]+)/);
+            if (durationMatch) {
+                const seconds = parseFloat(durationMatch[1]);
+                
+                // First try to extract clip ID from various patterns in the same message
+                const clipIdPatterns = [
+                    /Processing clip (\d+)/,
+                    /Trimming clip (\d+)/,
+                    /clip (\d+) duration/i,
+                    /clip (\d+) finished/i,
+                    /Final clip (\d+) duration/
+                ];
+                
+                let clipId = null;
+                for (const pattern of clipIdPatterns) {
+                    const match = update.match(pattern);
+                    if (match) {
+                        clipId = parseInt(match[1]);
+                        break;
+                    }
+                }
+                
+                // Only update if it's a clip ID we expect and it doesn't already have a duration
+                if (clipId && clipId in this.clipDurations && this.clipDurations[clipId] === null) {
+                    this.clipDurations[clipId] = seconds;
+                }
+            }
+        }
     }
 
     handleDownloadComplete(data) {
         const finalDuration = this.getFinalDuration(data);
-        const successMessage = data.totalClips && data.totalClips > 1
-            ? `${data.totalClips} clips successfully downloaded! (${finalDuration})`
-            : `Video successfully downloaded! (${finalDuration})`;
-        this.updateResultUI(successMessage, finalDuration);
+        let successMessage;
+        let durationsText;
+        
+        if (data.totalClips && data.totalClips > 1) {
+            // Format the message with all clip durations
+            durationsText = this.formatAllClipDurations();
+            successMessage = `${data.totalClips} clips successfully downloaded!`;
+        } else {
+            durationsText = finalDuration;
+            successMessage = `Video successfully downloaded!`;
+        }
+        
+        this.updateResultUI(successMessage, durationsText);
         this.updateButtonState('success');
+        
+        // Reset the clip durations for the next download
+        this.clipDurations = {};
+    }
+
+    formatAllClipDurations() {
+        // Use app.state.clips to ensure we only include the actual clips
+        const validClipIds = this.app.state.clips.map(clip => clip.id);
+        
+        // Filter clipDurations to only include valid clips with actual durations
+        const validDurations = Object.entries(this.clipDurations)
+            .filter(([clipId, duration]) => 
+                validClipIds.includes(parseInt(clipId)) && duration !== null)
+            .sort(([idA], [idB]) => parseInt(idA) - parseInt(idB))
+            .map(([clipId, seconds]) => 
+                `<span class="text-gray-400">clip ${clipId}, </span>${Utils.formatTimeFromSeconds(seconds)}`);
+        
+        // If we have valid durations, format them; otherwise use the fallback
+        if (validDurations.length > 0) {
+            return validDurations.join('; ');
+        } else {
+            return this.getFinalDuration({ duration: this.app.state.videoDurationSeconds || 0 });
+        }
     }
 
     getFinalDuration(data) {
@@ -67,10 +153,11 @@ export default class DownloadHandler {
             : Utils.formatTimeFromSeconds(this.app.state.videoDurationSeconds || 0);
     }
 
-    updateResultUI(successMessage, finalDuration) {
+    updateResultUI(successMessage, durationsText) {
         document.getElementById('downloadSuccessMessage').textContent = successMessage;
-        document.getElementById('downloadedVideoDuration').textContent = finalDuration;
-        document.getElementById('statusText').textContent = `Download complete - Duration: ${finalDuration}`;
+        // Use innerHTML for the durations text since it contains HTML formatting
+        document.getElementById('downloadedVideoDuration').innerHTML = durationsText;
+        document.getElementById('statusText').innerHTML = `Download complete - Duration: ${durationsText}`;
         this.app.progress.setProgress(100);
         this.app.stateManager.switchToResultState();
     }
@@ -88,19 +175,33 @@ export default class DownloadHandler {
         let progressPercent = null;
         let statusText = 'Processing...';
         let progressDescription = '';
-        const dlMatch = message.match(/\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+[\d.]+\w+\s+at\s+[\d.]+\w+\/s\s+ETA\s+[\d:]+/);
+        
+        // Match download percentage from format: "[OUTPUT] ⇊ [download] X.X% of Y.YMiB at Z.ZMiB/s ETA 00:00"
+        const dlMatch = message.match(/(?:⇊\s*)?\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+[\d.]+\w+\s+at\s+[\d.]+\w+\/s\s+ETA\s+[\d:]+/);
         if (dlMatch) {
             const dlPercent = parseFloat(dlMatch[1]);
             progressPercent = 25 + (dlPercent * 0.5);
             statusText = `Downloading: ${dlPercent.toFixed(1)}%`;
             progressDescription = `(${Math.round(progressPercent)}% overall)`;
-        } else if (message.includes('frame=') && message.includes('time=')) {
+        } 
+        // Match trimming percentage from format: "[OUTPUT] Trimming clip X: Y% complete"
+        else if (message.match(/Trimming clip \d+:\s+(\d+)%\s+complete/)) {
+            const trimMatch = message.match(/Trimming clip \d+:\s+(\d+)%\s+complete/);
+            if (trimMatch) {
+                const trimPercent = parseInt(trimMatch[1]);
+                progressPercent = 75 + (trimPercent * 0.25);
+                statusText = `Trimming: ${trimPercent}%`;
+                progressDescription = `(${Math.round(progressPercent)}% overall)`;
+            }
+        }
+        // Fallback to the original ffmpeg frame/time parsing logic
+        else if (message.includes('frame=') && message.includes('time=')) {
             const timeMatch = message.match(/time=(\d+):(\d+):(\d+\.\d+)/);
             if (timeMatch) {
                 const elapsed = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseFloat(timeMatch[3]);
                 const total = this.app.state.videoDurationSeconds || 600;
                 const trimPercent = Math.min(100, (elapsed / total) * 100);
-                progressPercent = 75 + (trimPercent * 0.15);
+                progressPercent = 75 + (trimPercent * 0.25);
                 statusText = `Trimming: ${Math.round(trimPercent)}%`;
                 progressDescription = `(${Math.round(progressPercent)}% overall)`;
             }
@@ -153,10 +254,14 @@ export default class DownloadHandler {
         const durationMatch = message.match(/\[TRIMMED_DURATION\](\d+\.\d+)/);
         if (durationMatch) {
             const seconds = parseFloat(durationMatch[1]);
+            
+            // Only update UI with duration information
             statusTextEl.innerHTML = `Download complete - Duration: ${Utils.formatTimeFromSeconds(seconds)}`;
             const descriptionEl = document.getElementById('progress-description');
             if (descriptionEl) descriptionEl.textContent = ' (100% complete)';
             this.app.progress.setProgress(100);
+            
+            // Duration tracking is now handled in handleDownloadUpdate to avoid duplicates
         }
     }
 
