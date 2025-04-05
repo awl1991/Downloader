@@ -1,4 +1,5 @@
-class ProgressManager {
+// Manages the progress ring UI, updating it based on download progress
+export default class ProgressManager {
     constructor() {
       const circle = document.querySelector('.progress-ring__circle');
       this.radius = circle.r.baseVal.value;
@@ -13,5 +14,3 @@ class ProgressManager {
       document.getElementById('progressPercent').textContent = `${Math.round(percent)}%`;
     }
   }
-  
-  export default ProgressManager;
