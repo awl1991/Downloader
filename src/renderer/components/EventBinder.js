@@ -13,6 +13,7 @@ export default class EventBinder {
         this.bindElectronEvents();
         this.bindClipControls();
         this.bindConsoleToggle();
+        this.loadSavedDownloadLocation();
     }
 
     bindWindowControls() {
@@ -35,8 +36,20 @@ export default class EventBinder {
     }
 
     bindFormControls() {
-        document.getElementById('clearFormBtn').addEventListener('click', () => this.app.formManager.clearForm());
+        const clearBtn = document.getElementById('clearFormBtn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => this.app.formManager.clearForm());
+        } else {
+            console.warn('Clear form button not found');
+        }
+        
         document.getElementById('browseButton').addEventListener('click', () => this.handleBrowseButton());
+        
+        // Add event listener for direct changes to download location
+        const downloadLocationInput = document.getElementById('downloadLocation');
+        downloadLocationInput.addEventListener('change', () => {
+            this.saveDownloadLocation(downloadLocationInput.value);
+        });
     }
 
     async handleBrowseButton() {
@@ -55,6 +68,29 @@ export default class EventBinder {
         input.value = folderPath;
         input.classList.add('ring-2', 'ring-accent-500');
         setTimeout(() => input.classList.remove('ring-2', 'ring-accent-500'), 1000);
+        
+        // Save the download location
+        this.saveDownloadLocation(folderPath);
+    }
+
+    async loadSavedDownloadLocation() {
+        try {
+            const savedLocation = await window.electronAPI.getDownloadLocation();
+            if (savedLocation) {
+                const input = document.getElementById('downloadLocation');
+                input.value = savedLocation;
+                this.app.logger.logOutput('Loaded saved download location', 'text-gray-400');
+            }
+        } catch (error) {
+            console.error('Error loading saved download location:', error);
+        }
+    }
+    
+    saveDownloadLocation(location) {
+        if (location && location.trim()) {
+            window.electronAPI.saveDownloadLocation(location)
+                .catch(error => console.error('Error saving download location:', error));
+        }
     }
 
     bindUrlInput() {
@@ -64,7 +100,6 @@ export default class EventBinder {
         urlInput.addEventListener('blur', () => this.app.urlHandler.handleUrlChange(urlInput.value.trim()));
     }
 
-    // ... (other methods unchanged)
     bindDownloadForm() {
         const form = document.getElementById('downloadForm');
         if (!form) {
@@ -76,17 +111,6 @@ export default class EventBinder {
             this.app.downloadHandler.handleSubmit(e);
         });
     }
-
-    bindFormControls() {
-        const clearBtn = document.getElementById('clearFormBtn');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', () => this.app.formManager.clearForm());
-        } else {
-            console.warn('Clear form button not found');
-        }
-        document.getElementById('browseButton').addEventListener('click', () => this.handleBrowseButton());
-    }
-    // ...
 
     bindElectronEvents() {
         window.electronAPI.onDownloadUpdate((update) => this.app.downloadHandler.handleDownloadUpdate(update));

@@ -15,6 +15,7 @@ export default class DownloadHandler {
         if (!url) {
             this.app.logger.logOutput('Please enter a valid URL before downloading', 'text-red-500');
             console.log('No URL provided');
+            this.showUrlInputAnimation();
             return;
         }
         console.log('Starting download for URL:', url);
@@ -22,36 +23,94 @@ export default class DownloadHandler {
         this.app.stateManager.switchToProgressState();
         this.startDownload(url);
     }
-
-    startDownload(url) {
-        const downloadLocation = document.getElementById('downloadLocation').value;
-        this.app.state.downloadStartTime = new Date();
-        
-        // Initialize clipDurations with only the expected clip IDs
-        this.clipDurations = {};
-        const clipJobs = this.app.state.clips.map(clip => {
-            // Setup empty placeholders for each expected clip ID
-            this.clipDurations[clip.id] = null;
-            
-            return {
-                url,
-                start: Utils.formatTimeFromSeconds(clip.startTime),
-                end: Utils.formatTimeFromSeconds(clip.endTime),
-                downloadLocation,
-                clipId: clip.id
-            };
-        });
-        
-        if (!window.electronAPI || !window.electronAPI.downloadVideo) {
-            console.error('Electron API not available');
-            this.app.logger.logOutput('Error: Electron API not available', 'text-red-500');
-            this.updateButtonState('idle');
-            this.app.stateManager.switchToInitialState();
+    
+    showUrlInputAnimation() {
+        console.log('Adding URL placeholder message');
+        const urlInput = document.getElementById('url');
+        if (!urlInput) {
+            console.error('URL input element not found');
             return;
         }
-        console.log('Sending to Electron:', { url, downloadLocation, clips: clipJobs });
-        window.electronAPI.downloadVideo({ url, downloadLocation, clips: clipJobs });
-        this.app.logger.logOutput(`Processing ${clipJobs.length} clip${clipJobs.length > 1 ? 's' : ''}...`);
+        
+        // Set the static placeholder message
+        urlInput.placeholder = 'Paste video url here...';
+        
+        // Remove any existing styles that might interfere
+        urlInput.classList.remove('ring', 'ring-1', 'ring-2', 'ring-accent-500', 'ring-red-400', 'ring-opacity-50');
+        
+        // Focus the input to ensure the placeholder is visible
+        urlInput.focus();
+        
+        // Function to clear placeholder when no longer needed
+        const clearPlaceholder = () => {
+            // Only reset if user has entered something
+            if (urlInput.value.trim()) {
+                urlInput.placeholder = '';
+            }
+            urlInput.removeEventListener('input', clearPlaceholder);
+        };
+        
+        // Add event listener to clear placeholder when user starts typing
+        urlInput.addEventListener('input', clearPlaceholder);
+    }
+
+    startDownload(url) {
+        try {
+            // Get download location, fallback to Downloads folder if empty or invalid
+            let downloadLocation = document.getElementById('downloadLocation').value;
+            if (!downloadLocation || downloadLocation.trim() === '') {
+                downloadLocation = path.join(require('os').homedir(), 'Downloads');
+                this.app.logger.logOutput('Using default download location', 'text-accent-500');
+                
+                // Update the UI with the default location
+                document.getElementById('downloadLocation').value = downloadLocation;
+            }
+            
+            // Try to save the location before starting the download
+            try {
+                if (window.electronAPI && window.electronAPI.saveDownloadLocation) {
+                    window.electronAPI.saveDownloadLocation(downloadLocation)
+                        .catch(err => console.error('Failed to save download location:', err));
+                }
+            } catch (saveError) {
+                console.error('Error saving download location:', saveError);
+                // Continue with download even if saving fails
+            }
+            
+            this.app.state.downloadStartTime = new Date();
+            
+            // Initialize clipDurations with only the expected clip IDs
+            this.clipDurations = {};
+            const clipJobs = this.app.state.clips.map(clip => {
+                // Setup empty placeholders for each expected clip ID
+                this.clipDurations[clip.id] = null;
+                
+                return {
+                    url,
+                    start: Utils.formatTimeFromSeconds(clip.startTime),
+                    end: Utils.formatTimeFromSeconds(clip.endTime),
+                    downloadLocation,
+                    clipId: clip.id
+                };
+            });
+            
+            if (!window.electronAPI || !window.electronAPI.downloadVideo) {
+                console.error('Electron API not available');
+                this.app.logger.logOutput('Error: Electron API not available', 'text-red-500');
+                this.updateButtonState('idle');
+                this.app.stateManager.switchToInitialState();
+                return;
+            }
+            
+            console.log('Sending to Electron:', { url, downloadLocation, clips: clipJobs });
+            window.electronAPI.downloadVideo({ url, downloadLocation, clips: clipJobs });
+            this.app.logger.logOutput(`Processing ${clipJobs.length} clip${clipJobs.length > 1 ? 's' : ''}...`);
+        } catch (error) {
+            console.error('Error starting download:', error);
+            this.app.logger.logOutput(`Error starting download: ${error.message}`, 'text-red-500');
+            this.updateButtonState('idle');
+            this.app.stateManager.switchToInitialState();
+        }
     }
     // ...
 
@@ -107,24 +166,37 @@ export default class DownloadHandler {
     }
 
     handleDownloadComplete(data) {
-        const finalDuration = this.getFinalDuration(data);
-        let successMessage;
-        let durationsText;
-        
-        if (data.totalClips && data.totalClips > 1) {
-            // Format the message with all clip durations
-            durationsText = this.formatAllClipDurations();
-            successMessage = `${data.totalClips} clips successfully downloaded!`;
-        } else {
-            durationsText = finalDuration;
-            successMessage = `Video successfully downloaded!`;
+        try {
+            const finalDuration = this.getFinalDuration(data);
+            let successMessage;
+            let durationsText;
+            
+            if (data && data.totalClips && data.totalClips > 1) {
+                // Format the message with all clip durations
+                durationsText = this.formatAllClipDurations();
+                successMessage = `${data.totalClips} clips successfully downloaded!`;
+            } else {
+                durationsText = finalDuration;
+                successMessage = `Video successfully downloaded!`;
+            }
+            
+            this.updateResultUI(successMessage, durationsText);
+            this.updateButtonState('success');
+            
+            // Reset the clip durations for the next download
+            this.clipDurations = {};
+        } catch (error) {
+            console.error('Error handling download complete:', error);
+            this.app.logger.logOutput(`Error handling download complete: ${error.message}`, 'text-red-500');
+            
+            // Attempt to recover UI to a usable state
+            try {
+                this.updateButtonState('idle');
+                this.app.stateManager.switchToInitialState();
+            } catch (uiError) {
+                console.error('Failed to reset UI after error:', uiError);
+            }
         }
-        
-        this.updateResultUI(successMessage, durationsText);
-        this.updateButtonState('success');
-        
-        // Reset the clip durations for the next download
-        this.clipDurations = {};
     }
 
     formatAllClipDurations() {
@@ -154,12 +226,47 @@ export default class DownloadHandler {
     }
 
     updateResultUI(successMessage, durationsText) {
-        document.getElementById('downloadSuccessMessage').textContent = successMessage;
-        // Use innerHTML for the durations text since it contains HTML formatting
-        document.getElementById('downloadedVideoDuration').innerHTML = durationsText;
-        document.getElementById('statusText').innerHTML = `Download complete - Duration: ${durationsText}`;
-        this.app.progress.setProgress(100);
-        this.app.stateManager.switchToResultState();
+        try {
+            const successMessageEl = document.getElementById('downloadSuccessMessage');
+            const durationEl = document.getElementById('downloadedVideoDuration');
+            const statusTextEl = document.getElementById('statusText');
+            
+            if (successMessageEl) {
+                successMessageEl.textContent = successMessage;
+            }
+            
+            // Use innerHTML for the durations text since it contains HTML formatting
+            if (durationEl) {
+                durationEl.innerHTML = durationsText;
+            }
+            
+            if (statusTextEl) {
+                statusTextEl.innerHTML = `Download complete - Duration: ${durationsText}`;
+            }
+            
+            // Update progress
+            try {
+                this.app.progress.setProgress(100);
+            } catch (progressError) {
+                console.error('Error setting progress:', progressError);
+            }
+            
+            // Switch state
+            try {
+                this.app.stateManager.switchToResultState();
+            } catch (stateError) {
+                console.error('Error switching to result state:', stateError);
+                // Try fallback to initial state if result state fails
+                try {
+                    this.app.stateManager.switchToInitialState();
+                } catch (fallbackError) {
+                    console.error('Error in fallback state switch:', fallbackError);
+                }
+            }
+        } catch (error) {
+            console.error('Error updating result UI:', error);
+            this.app.logger.logOutput('Error showing download results', 'text-red-500');
+        }
     }
 
     updateProgressFromMessage(message) {

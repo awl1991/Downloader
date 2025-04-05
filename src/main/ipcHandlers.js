@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { checkDependencies, dependencyStatus } = require('./dependencyChecker');
 const { logToFile } = require('./logger');
+const { getDownloadLocation, saveDownloadLocation } = require('./settingsManager');
 
 function getResourcePath(resource) {
   const app = require('electron').app;
@@ -121,11 +122,31 @@ async function fetchDuration(mainWindow, ytDlpPath, url) {
 }
 
 async function processClip(mainWindow, status, sourceFile, downloadLocation, baseTitle, timestamp, clip, sessionId) {
-  const { start, end, clipId } = clip;
-  
-  // Use the sessionId (random number) prefix with the clip number
-  const outputFileName = `${sessionId}_clip ${clipId}.mp4`;
-  const outputFile = path.join(downloadLocation, outputFileName);
+  try {
+    const { start, end, clipId } = clip;
+    
+    // Safety check for invalid parameters
+    if (!sourceFile || !fs.existsSync(sourceFile)) {
+      logError(mainWindow, `Source file not found for clip ${clipId}: ${sourceFile}`);
+      return null;
+    }
+    
+    if (!downloadLocation) {
+      downloadLocation = path.join(require('os').homedir(), 'Downloads');
+      logMessage(mainWindow, `Using fallback download location: ${downloadLocation}`);
+    }
+    
+    // Ensure download directory exists
+    try {
+      fs.mkdirSync(downloadLocation, { recursive: true });
+    } catch (mkdirError) {
+      logError(mainWindow, `Failed to ensure download directory exists: ${mkdirError.message}`);
+      return null;
+    }
+    
+    // Use the sessionId (random number) prefix with the clip number
+    const outputFileName = `${sessionId}_clip ${clipId}.mp4`;
+    let outputFile = path.join(downloadLocation, outputFileName);
   
   let finalDuration;
   
@@ -156,9 +177,22 @@ async function processClip(mainWindow, status, sourceFile, downloadLocation, bas
       '-y',
       trimmedTempFile
     ];
+    // Add process timeout protection
+    let ffmpegTimeout;
+    let isProcessCompleted = false;
+    
+    logMessage(mainWindow, `Starting ffmpeg trim process for clip ${clipId} [${start} to ${end}]`);
+    
     const ffmpegTrim = spawn(status.ffmpegPath, ffmpegArgs, { shell: false });
-    ffmpegTrim.stdout.on('data', (data) => logMessage(mainWindow, `ffmpeg: ${data.toString().trim()}`));
+    ffmpegTrim.stdout.on('data', (data) => logMessage(mainWindow, `ffmpeg stdout: ${data.toString().trim()}`));
+    
+    // Track last output time to detect hanging
+    let lastOutputTime = Date.now();
+    
     ffmpegTrim.stderr.on('data', (data) => {
+      // Update last output time
+      lastOutputTime = Date.now();
+      
       const output = data.toString().trim();
       // Only log actual errors, not verbose output
       if (output.includes('Error') || output.includes('ERROR') || output.includes('failed') || output.includes('Failed') || output.includes('Invalid')) {
@@ -177,34 +211,125 @@ async function processClip(mainWindow, status, sourceFile, downloadLocation, bas
         }
       }
     });
-    await new Promise((resolve) => ffmpegTrim.on('close', (code) => {
-      if (code !== 0 || !fs.existsSync(trimmedTempFile)) {
-        logError(mainWindow, `Trimming failed for clip ${clipId}`);
-        resolve(false);
-      } else {
-        resolve(true);
+    
+    // Handle process error
+    ffmpegTrim.on('error', (err) => {
+      logError(mainWindow, `ffmpeg process error: ${err.message}`);
+      clearTimeout(ffmpegTimeout);
+      if (!isProcessCompleted) {
+        isProcessCompleted = true;
+        // Kill the process just to be sure
+        try { ffmpegTrim.kill('SIGKILL'); } catch (e) {}
       }
-    }));
+    });
+
+    // Set up progress checking timer to detect hanging
+    const progressTimer = setInterval(() => {
+      const now = Date.now();
+      // If no output for more than 60 seconds, consider it hung
+      if (now - lastOutputTime > 60000) {
+        logError(mainWindow, `ffmpeg process appears to be hanging (no output for 60s) - killing`);
+        clearInterval(progressTimer);
+        try { ffmpegTrim.kill('SIGKILL'); } catch (e) {}
+      }
+    }, 10000);
+
+    try {
+      await new Promise((resolve, reject) => {
+        // Set a timeout in case the process hangs
+        ffmpegTimeout = setTimeout(() => {
+          if (!isProcessCompleted) {
+            isProcessCompleted = true;
+            logError(mainWindow, `ffmpeg process timed out after 5 minutes`);
+            try { ffmpegTrim.kill('SIGKILL'); } catch (e) {}
+            resolve(false);
+          }
+        }, 300000); // 5 minute timeout
+        
+        ffmpegTrim.on('close', (code) => {
+          clearTimeout(ffmpegTimeout);
+          clearInterval(progressTimer);
+          isProcessCompleted = true;
+          
+          if (code !== 0 || !fs.existsSync(trimmedTempFile)) {
+            logError(mainWindow, `Trimming failed for clip ${clipId} with code ${code}`);
+            resolve(false);
+          } else {
+            logMessage(mainWindow, `Trimming process completed successfully for clip ${clipId}`);
+            resolve(true);
+          }
+        });
+      });
+    } catch (ffmpegError) {
+      logError(mainWindow, `Exception during ffmpeg execution: ${ffmpegError.message}`);
+      clearTimeout(ffmpegTimeout);
+      clearInterval(progressTimer);
+      try { ffmpegTrim.kill('SIGKILL'); } catch (e) {}
+    }
     if (!fs.existsSync(trimmedTempFile)) return null;
 
     const trimmedDuration = await getVideoDuration(mainWindow, status.ffprobePath, trimmedTempFile);
     logMessage(mainWindow, `Trimmed clip ${clipId} duration: ${trimmedDuration} seconds`);
     logMessage(mainWindow, `[TRIMMED_DURATION]${trimmedDuration}`);
     
-    fs.renameSync(trimmedTempFile, outputFile);
-    logMessage(mainWindow, `Trimming completed successfully for clip ${clipId}`);
-    finalDuration = trimmedDuration;
+    try {
+      // Use fs.copyFileSync instead of renameSync (more reliable across volumes in Windows)
+      fs.copyFileSync(trimmedTempFile, outputFile);
+      
+      // Only delete source after successful copy
+      try {
+        fs.unlinkSync(trimmedTempFile);
+      } catch (unlinkError) {
+        logMessage(mainWindow, `Warning: Could not delete temp trimmed file (will be cleaned up later): ${unlinkError.message}`);
+        // Don't throw - continue even if temp file deletion fails
+      }
+      
+      logMessage(mainWindow, `Trimming completed successfully for clip ${clipId}`);
+      finalDuration = trimmedDuration;
+    } catch (fileOpError) {
+      logError(mainWindow, `Error finalizing trimmed file: ${fileOpError.message}`);
+      
+      // Fallback: Try direct usage of trimmed file if copy fails
+      if (fs.existsSync(trimmedTempFile)) {
+        logMessage(mainWindow, `Using trimmed temp file directly: ${trimmedTempFile}`);
+        return { 
+          path: trimmedTempFile, 
+          duration: finalDuration,
+          clipId: clipId
+        };
+      }
+      
+      return null;
+    }
   } else {
     logMessage(mainWindow, `No trimming needed for clip ${clipId}, copying full video`);
     
-    // Make a copy of the file
-    const readStream = fs.createReadStream(sourceFile);
-    const writeStream = fs.createWriteStream(outputFile);
-    await new Promise((resolve, reject) => {
-      readStream.pipe(writeStream);
-      writeStream.on('finish', resolve);
-      writeStream.on('error', reject);
-    });
+    // Make a copy of the file with safer error handling
+    try {
+      // Use fs.copyFileSync for more reliable copying (especially in Windows packaged apps)
+      fs.copyFileSync(sourceFile, outputFile);
+      logMessage(mainWindow, `Copied full video for clip ${clipId}`);
+    } catch (copyError) {
+      logError(mainWindow, `Error copying file: ${copyError.message}`);
+      
+      // Fallback to stream copying if direct copy fails
+      try {
+        logMessage(mainWindow, `Attempting stream copy fallback for clip ${clipId}`);
+        const readStream = fs.createReadStream(sourceFile);
+        const writeStream = fs.createWriteStream(outputFile);
+        await new Promise((resolve, reject) => {
+          readStream.pipe(writeStream);
+          writeStream.on('finish', resolve);
+          writeStream.on('error', (err) => {
+            logError(mainWindow, `Stream copy error: ${err.message}`);
+            reject(err);
+          });
+        });
+      } catch (streamError) {
+        logError(mainWindow, `Stream copy also failed: ${streamError.message}`);
+        return null;
+      }
+    }
     
     finalDuration = await getVideoDuration(mainWindow, status.ffprobePath, outputFile);
     logMessage(mainWindow, `Full video duration for clip ${clipId}: ${finalDuration} seconds`);
@@ -239,9 +364,35 @@ async function processClip(mainWindow, status, sourceFile, downloadLocation, bas
       logMessage(mainWindow, `Warning: Metadata application failed for clip ${clipId}, continuing with original file`);
       resolve(false);
     } else {
-      fs.unlinkSync(outputFile);
-      fs.renameSync(tempMetadataFile, outputFile);
-      logMessage(mainWindow, `Metadata applied successfully to clip ${clipId}`);
+      try {
+        // Safe file operations with verification
+        if (fs.existsSync(outputFile)) {
+          fs.unlinkSync(outputFile);
+        }
+        
+        // Use copyFileSync instead of renameSync (more reliable in Windows)
+        fs.copyFileSync(tempMetadataFile, outputFile);
+        
+        // Only delete source after successful copy
+        try {
+          fs.unlinkSync(tempMetadataFile);
+        } catch (unlinkTempError) {
+          logMessage(mainWindow, `Warning: Could not delete metadata temp file: ${unlinkTempError.message}`);
+          // Continue anyway
+        }
+        
+        logMessage(mainWindow, `Metadata applied successfully to clip ${clipId}`);
+      } catch (finalizeError) {
+        logError(mainWindow, `Error finalizing with metadata: ${finalizeError.message}`);
+        
+        // If we failed to apply metadata but the temp file exists, use it directly
+        if (fs.existsSync(tempMetadataFile)) {
+          logMessage(mainWindow, `Using metadata temp file directly: ${tempMetadataFile}`);
+          outputFile = tempMetadataFile; // Update output path to the temp file
+        } else {
+          logMessage(mainWindow, `Continuing with original file without metadata`);
+        }
+      }
       resolve(true);
     }
   }));
@@ -254,99 +405,107 @@ async function processClip(mainWindow, status, sourceFile, downloadLocation, bas
     duration: finalDuration,
     clipId: clipId
   };
+  } catch (error) {
+    logError(mainWindow, `Error processing clip ${clip?.clipId || 'unknown'}: ${error.message}`);
+    return null;
+  }
 }
 
 async function invokeYtdlpDownload(mainWindow, options, status) {
-  logMessage(mainWindow, 'Script running');
-  
-  const { url, downloadLocation, clips } = options;
-  const formattedDownloadLocation = downloadLocation || path.join(require('os').homedir(), 'Downloads');
-  
-  // Generate a 7-digit random number for this download session
-  const sessionId = Math.floor(1000000 + Math.random() * 9000000).toString();
-  logMessage(mainWindow, `Session ID for this download: ${sessionId}`);
-  
-  // Normalize path separators
-  const normalizedLocation = formattedDownloadLocation.replace(/\\/g, '/');
-
-  if (!status.ytDlpAvailable || !status.ffmpegAvailable || !status.ffprobeAvailable) {
-    logError(mainWindow, 'Dependencies missing');
-    return null;
-  }
-
-  fs.mkdirSync(normalizedLocation, { recursive: true });
-  if (!fs.existsSync(normalizedLocation)) {
-    logError(mainWindow, 'Failed to create download directory');
-    return null;
-  }
-  logMessage(mainWindow, `Download location: ${normalizedLocation}`);
-
-  logMessage(mainWindow, 'Fetching metadata');
-  let title = `video_${new Date().toISOString().replace(/[-:T]/g, '').split('.')[0]}`;
   try {
-    const ytDlpMeta = spawn(status.ytDlpPath, ['--get-title', '--get-description', url], { shell: false });
-    let output = '';
-    ytDlpMeta.stdout.on('data', (data) => output += data.toString());
-    ytDlpMeta.stderr.on('data', (data) => logMessage(mainWindow, `Metadata fetch error: ${data.toString()}`));
-    await new Promise(resolve => ytDlpMeta.on('close', resolve));
-    const lines = output.trim().split('\n');
-    const possibleTitle = lines[0]?.trim();
-    if (possibleTitle && !/^(WARNING|ERROR|nsig extraction failed)/i.test(possibleTitle)) {
-      title = possibleTitle;
-      logMessage(mainWindow, `Got title: ${title}`);
-      if (/x\.com|twitter\.com/i.test(url)) {
-        title = title.replace(/^[^-]+\s*-\s*/, '');
-        logMessage(mainWindow, 'Cleaning X title');
+    logMessage(mainWindow, 'Script running');
+    
+    const { url, downloadLocation, clips } = options;
+    const formattedDownloadLocation = downloadLocation || path.join(require('os').homedir(), 'Downloads');
+    
+    // Generate a 7-digit random number for this download session
+    const sessionId = Math.floor(1000000 + Math.random() * 9000000).toString();
+    logMessage(mainWindow, `Session ID for this download: ${sessionId}`);
+  
+    // Use normalized path that will be properly persisted by electron-store
+    const normalizedLocation = path.normalize(formattedDownloadLocation);
+    
+    // Log path for troubleshooting
+    logToFile(`Using download location: ${normalizedLocation}`);
+
+    if (!status.ytDlpAvailable || !status.ffmpegAvailable || !status.ffprobeAvailable) {
+      logError(mainWindow, 'Dependencies missing');
+      return null;
+    }
+
+    fs.mkdirSync(normalizedLocation, { recursive: true });
+    if (!fs.existsSync(normalizedLocation)) {
+      logError(mainWindow, 'Failed to create download directory');
+      return null;
+    }
+    logMessage(mainWindow, `Download location: ${normalizedLocation}`);
+
+    logMessage(mainWindow, 'Fetching metadata');
+    let title = `video_${new Date().toISOString().replace(/[-:T]/g, '').split('.')[0]}`;
+    try {
+      const ytDlpMeta = spawn(status.ytDlpPath, ['--get-title', '--get-description', url], { shell: false });
+      let output = '';
+      ytDlpMeta.stdout.on('data', (data) => output += data.toString());
+      ytDlpMeta.stderr.on('data', (data) => logMessage(mainWindow, `Metadata fetch error: ${data.toString()}`));
+      await new Promise(resolve => ytDlpMeta.on('close', resolve));
+      const lines = output.trim().split('\n');
+      const possibleTitle = lines[0]?.trim();
+      if (possibleTitle && !/^(WARNING|ERROR|nsig extraction failed)/i.test(possibleTitle)) {
+        title = possibleTitle;
+        logMessage(mainWindow, `Got title: ${title}`);
+        if (/x\.com|twitter\.com/i.test(url)) {
+          title = title.replace(/^[^-]+\s*-\s*/, '');
+          logMessage(mainWindow, 'Cleaning X title');
+        }
       }
+    } catch (e) {
+      logMessage(mainWindow, `Error during metadata fetch: ${e.message}`);
     }
-  } catch (e) {
-    logMessage(mainWindow, `Error during metadata fetch: ${e.message}`);
-  }
 
-  const cleanTitle = title.replace(/[<>:\"/\\|?*]/g, '').trim() || `video_${new Date().toISOString().replace(/[-:T]/g, '').split('.')[0]}`;
-  logMessage(mainWindow, `Using title for file: ${cleanTitle}`);
+    const cleanTitle = title.replace(/[<>:\"/\\|?*]/g, '').trim() || `video_${new Date().toISOString().replace(/[-:T]/g, '').split('.')[0]}`;
+    logMessage(mainWindow, `Using title for file: ${cleanTitle}`);
 
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const tempFile = path.join(normalizedLocation, `${cleanTitle}_temp.mp4`);
-  
-  logMessage(mainWindow, 'Downloading video');
-  const ytdlpArgs = [
-    '-f', '[height<=1080][ext=mp4]/bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080][ext=mp4]/best[ext=mp4]', // 1080p or lower
-    '--merge-output-format', 'mp4', // Ensure MP4 output
-    '--no-mtime', // Don't set modification time
-    '--no-check-certificate', // Skip SSL verification
-    '--geo-bypass', // Bypass geo-restrictions
-    '--ignore-errors', // Continue on errors
-    '--force-overwrites', // Overwrite existing files
-    '--retry-sleep', '5', // Wait 5 seconds between retries
-    '--extractor-args', 'youtube:player_client=android,web', // Extractor settings
-    '--extractor-retries', '3', // Retry extraction 3 times
-    '-o', tempFile, // Output file path
-    url // The Rumble URL
-  ];
-  const ytDlp = spawn(status.ytDlpPath, ytdlpArgs, { shell: false });
-  ytDlp.stdout.on('data', (data) => logMessage(mainWindow, `⇊ ${data.toString().trim()}`));
-  ytDlp.stderr.on('data', (data) => {
-    const output = data.toString().trim();
-    if (output.includes('ERROR') || output.includes('error') || output.includes('Failed') || output.includes('failed')) {
-      logError(mainWindow, output);
-    } else {
-      // Don't log standard ffmpeg/ytdlp output that goes to stderr
-    }
-  });
-  await new Promise((resolve) => ytDlp.on('close', (code) => {
-    if (code !== 0 || !fs.existsSync(tempFile)) {
-      logError(mainWindow, 'Download failed after retries');
-      resolve(false);
-    } else {
-      logMessage(mainWindow, 'Download completed successfully');
-      resolve(true);
-    }
-  }));
-  if (!fs.existsSync(tempFile)) return null;
-  
-  // Process all clips
-  const processedFiles = [];
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const tempFile = path.join(normalizedLocation, `${cleanTitle}_temp.mp4`);
+    
+    logMessage(mainWindow, 'Downloading video');
+    const ytdlpArgs = [
+      '-f', '[height<=1080][ext=mp4]/bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080][ext=mp4]/best[ext=mp4]', // 1080p or lower
+      '--merge-output-format', 'mp4', // Ensure MP4 output
+      '--no-mtime', // Don't set modification time
+      '--no-check-certificate', // Skip SSL verification
+      '--geo-bypass', // Bypass geo-restrictions
+      '--ignore-errors', // Continue on errors
+      '--force-overwrites', // Overwrite existing files
+      '--retry-sleep', '5', // Wait 5 seconds between retries
+      '--extractor-args', 'youtube:player_client=android,web', // Extractor settings
+      '--extractor-retries', '3', // Retry extraction 3 times
+      '-o', tempFile, // Output file path
+      url // The Rumble URL
+    ];
+    const ytDlp = spawn(status.ytDlpPath, ytdlpArgs, { shell: false });
+    ytDlp.stdout.on('data', (data) => logMessage(mainWindow, `⇊ ${data.toString().trim()}`));
+    ytDlp.stderr.on('data', (data) => {
+      const output = data.toString().trim();
+      if (output.includes('ERROR') || output.includes('error') || output.includes('Failed') || output.includes('failed')) {
+        logError(mainWindow, output);
+      } else {
+        // Don't log standard ffmpeg/ytdlp output that goes to stderr
+      }
+    });
+    await new Promise((resolve) => ytDlp.on('close', (code) => {
+      if (code !== 0 || !fs.existsSync(tempFile)) {
+        logError(mainWindow, 'Download failed after retries');
+        resolve(false);
+      } else {
+        logMessage(mainWindow, 'Download completed successfully');
+        resolve(true);
+      }
+    }));
+    if (!fs.existsSync(tempFile)) return null;
+    
+    // Process all clips
+    const processedFiles = [];
   
   // If no clips provided, or we have only one simple request, handle as a single clip
   if (!clips || !Array.isArray(clips) || clips.length === 0) {
@@ -396,29 +555,115 @@ async function invokeYtdlpDownload(mainWindow, options, status) {
     }
   }
   
-  // Clean up the temporary download file
-  if (fs.existsSync(tempFile)) {
+  // Enhanced safe cleanup with fallback for Windows specific issues
+  let tempFileCleaned = false;
+  
+  // First attempt - standard file deletion
+  try {
+    if (fs.existsSync(tempFile)) {
+      try {
+        fs.unlinkSync(tempFile);
+        tempFileCleaned = true;
+        logMessage(mainWindow, `Temporary file cleaned up`);
+      } catch (err) {
+        logMessage(mainWindow, `Standard cleanup failed: ${err.message}, trying alternative methods...`);
+      }
+    } else {
+      tempFileCleaned = true; // File doesn't exist, so it's "cleaned"
+    }
+  } catch (cleanupError) {
+    logMessage(mainWindow, `Error checking temp file existence: ${cleanupError.message}`);
+  }
+  
+  // Second attempt - if standard deletion failed, try using the rimraf pattern
+  // This is especially helpful for Windows where files might be locked
+  if (!tempFileCleaned) {
     try {
-      fs.unlinkSync(tempFile);
-    } catch (err) {
-      logMessage(mainWindow, `Warning: Could not delete temp file: ${err.message}`);
+      logMessage(mainWindow, `Attempting alternative cleanup for: ${tempFile}`);
+      
+      // Create a dummy file then delete it - this can sometimes release locks
+      // (Windows-specific workaround)
+      const dummyPath = `${tempFile}.cleanup`;
+      try {
+        fs.writeFileSync(dummyPath, '');
+        fs.unlinkSync(dummyPath);
+      } catch (dummyError) {
+        // Ignore errors with the dummy file
+      }
+      
+      // Try deletion again after a short delay
+      setTimeout(() => {
+        try {
+          if (fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+            logMessage(mainWindow, `Delayed cleanup successful`);
+          }
+        } catch (finalError) {
+          logMessage(mainWindow, `Final cleanup attempt failed, file may remain: ${finalError.message}`);
+        }
+      }, 1000);
+    } catch (altCleanupError) {
+      logMessage(mainWindow, `Alternative cleanup method failed: ${altCleanupError.message}`);
     }
   }
   
-  if (processedFiles.length > 0) {
-    // Notify about successful completion with the last processed file
-    const lastFile = processedFiles[processedFiles.length - 1];
-    const lastFileInfo = {
-      filePath: lastFile.path,
-      duration: lastFile.duration,
-      totalClips: processedFiles.length
-    };
-    
-    mainWindow.webContents.send('download-complete', lastFileInfo);
-    return processedFiles;
-  }
+  // Enhanced completion notification that won't break in packaged apps
+  // Use setTimeout to ensure we're not in the same event loop as file operations
+  // This helps prevent issues with file handles not being fully released
+  setTimeout(() => {
+    try {
+      if (processedFiles.length > 0) {
+        // Notify about successful completion with the last processed file
+        let lastFile = processedFiles[processedFiles.length - 1];
+        
+        // Extra validation for last file
+        if (!lastFile || typeof lastFile !== 'object') {
+          lastFile = { path: "", duration: 0, clipId: 0 };
+        }
+        
+        // Ensure we don't crash by accessing non-existent properties
+        const lastFileInfo = {
+          filePath: lastFile?.path || "",
+          duration: lastFile?.duration || 0,
+          totalClips: processedFiles.length
+        };
+        
+        // Send completion notification if mainWindow is still valid
+        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+          try {
+            mainWindow.webContents.send('download-complete', lastFileInfo);
+            logMessage(mainWindow, `Download complete notification sent`);
+          } catch (ipcError) {
+            logToFile(`Error sending download-complete via IPC: ${ipcError.message}`);
+          }
+        } else {
+          logToFile(`Warning: Could not send download-complete, window may be closed`);
+        }
+      } else {
+        logMessage(mainWindow, `No processed files to report completion for`);
+      }
+    } catch (completionError) {
+      logToFile(`Critical error during completion notification: ${completionError.message}`);
+    }
+  }, 500); // Small delay to ensure file operations are complete
   
-  return null;
+    return processedFiles;
+  } catch (completionError) {
+    logToFile(`Critical error during completion handler: ${completionError.message}`);
+    // Still try to send completion notification despite error
+    try {
+      if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download-complete', { 
+          duration: 0,
+          totalClips: 0
+        });
+      }
+    } catch (finalError) {
+      logToFile(`Failed to send backup completion notification: ${finalError.message}`);
+    }
+    
+    return null;
+  }
 }
 
 function setupIpcHandlers(mainWindow) {
@@ -426,14 +671,18 @@ function setupIpcHandlers(mainWindow) {
     logToFile('Error: mainWindow is undefined in setupIpcHandlers');
     return;
   }
+  
+  // Set up error handler for window close during operation
+  mainWindow.on('closed', () => {
+    logToFile('Main window was closed, any pending operations will be terminated');
+  });
   ipcMain.handle('select-folder', async () => {
-    const defaultPath = path.join(require('os').homedir(), 'Downloads');
+    const defaultPath = getDownloadLocation();
     
-    // In a real production app, you'd implement a robust custom folder selector
-    // For now, let's use Electron's dialog but with a synchronous and no-parent version
-    // that avoids creating the transparent window
+    logToFile(`Select folder dialog opened with default path: ${defaultPath}`);
+    
     try {
-      // Using synchronous version with specific settings to avoid the flash
+      // Using synchronous version with specific settings
       const result = dialog.showOpenDialogSync({
         title: 'Select Download Location',
         defaultPath: defaultPath,
@@ -442,7 +691,20 @@ function setupIpcHandlers(mainWindow) {
         message: 'Choose where to save downloaded videos'
       });
       
-      return result ? result[0] : null;
+      // If user selected a folder, save it automatically
+      if (result && result[0]) {
+        const selectedPath = result[0];
+        logToFile(`User selected folder: ${selectedPath}, saving to settings`);
+        
+        // Save the selected location to persistent storage
+        const saveSuccess = saveDownloadLocation(selectedPath);
+        logToFile(`Download location ${saveSuccess ? 'successfully saved' : 'failed to save'}`);
+        
+        return selectedPath;
+      }
+      
+      logToFile('User cancelled folder selection');
+      return null;
     } catch (error) {
       logToFile(`Error selecting folder: ${error.message}`);
       return null;
@@ -457,6 +719,17 @@ function setupIpcHandlers(mainWindow) {
       case 'minimize': window.minimize(); break;
       case 'toggleFullScreen': window.setFullScreen(!window.isFullScreen()); break;
     }
+  });
+
+  ipcMain.handle('get-download-location', () => {
+    return getDownloadLocation();
+  });
+
+  ipcMain.handle('save-download-location', (event, location) => {
+    logToFile(`Explicit save download location request for: ${location}`);
+    const result = saveDownloadLocation(location);
+    logToFile(`Explicit save result: ${result ? 'success' : 'failed'}`);
+    return result;
   });
 
   ipcMain.handle('get-dependency-status', () => dependencyStatus);
@@ -561,11 +834,35 @@ function setupIpcHandlers(mainWindow) {
         logMessage(mainWindow, `Received request to download ${options.clips.length} clips`);
       }
       
-      await invokeYtdlpDownload(mainWindow, options, status);
+      try {
+        await invokeYtdlpDownload(mainWindow, options, status);
+      } catch (downloadError) {
+        const errorMsg = `Error in download process: ${downloadError.message}`;
+        logError(mainWindow, errorMsg);
+        logToFile(errorMsg);
+        
+        // Attempt to send error notification to renderer
+        try {
+          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download-update', `[ERROR] Download failed: ${downloadError.message}`);
+          }
+        } catch (notifyError) {
+          logToFile(`Failed to notify renderer of download error: ${notifyError.message}`);
+        }
+      }
     } catch (error) {
-      const errorMsg = `Error downloading video: ${error.message}`;
+      const errorMsg = `Error initializing download: ${error.message}`;
       logError(mainWindow, errorMsg);
       logToFile(errorMsg);
+      
+      // Try to notify renderer even if main process errors out
+      try {
+        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('download-update', `[ERROR] ${errorMsg}`);
+        }
+      } catch (notifyError) {
+        logToFile(`Failed to notify renderer of initialization error: ${notifyError.message}`);
+      }
     }
   });
 }

@@ -9,5 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   getDependencyStatus: () => ipcRenderer.invoke('get-dependency-status'),
   openExternalLink: (url) => ipcRenderer.invoke('open-external-link', url),
-  windowControl: (action) => ipcRenderer.send('window-control', action)
+  windowControl: (action) => ipcRenderer.send('window-control', action),
+  getDownloadLocation: () => ipcRenderer.invoke('get-download-location'),
+  saveDownloadLocation: (location) => ipcRenderer.invoke('save-download-location', location)
 });
