@@ -471,10 +471,10 @@ function setupIpcHandlers(mainWindow) {
   ipcMain.handle('fetch-video-duration', async (event, url) => {
     try {
       const status = await checkDependencies();
-      const ytDlpPath = path.resolve(getResourcePath('assets/bin/yt-dlp.exe'));
+      // Use yt-dlp path from dependencyStatus, which is set from yt-dlp-wrap
       
-      logMessage(mainWindow, `Dependency check for duration fetch: yt-dlp=${status.ytDlpAvailable}, path=${ytDlpPath}`);
-      logToFile(`Fetching duration with yt-dlp at: ${ytDlpPath} for URL: ${url}`);
+      logMessage(mainWindow, `Dependency check for duration fetch: yt-dlp=${status.ytDlpAvailable}, path=${status.ytDlpPath}`);
+      logToFile(`Fetching duration with yt-dlp at: ${status.ytDlpPath} for URL: ${url}`);
       
       if (!status.ytDlpAvailable) {
         const errorMsg = 'yt-dlp unavailable';
@@ -483,8 +483,8 @@ function setupIpcHandlers(mainWindow) {
         throw new Error(errorMsg);
       }
       
-      // Always use absolute path to yt-dlp
-      return await fetchDuration(mainWindow, ytDlpPath, url);
+      // Use the path from dependencyStatus which comes from yt-dlp-wrap
+      return await fetchDuration(mainWindow, status.ytDlpPath, url);
     } catch (error) {
       const errorMsg = `Error in fetch-video-duration handler: ${error.message}`;
       logError(mainWindow, errorMsg);
@@ -496,7 +496,7 @@ function setupIpcHandlers(mainWindow) {
   ipcMain.handle('get-video-title', async (event, url) => {
     try {
       const status = await checkDependencies();
-      const ytDlpPath = path.resolve(getResourcePath('assets/bin/yt-dlp.exe'));
+      // Use yt-dlp path from dependencyStatus, which is set from yt-dlp-wrap
       
       logMessage(mainWindow, `Fetching video title for: ${url}`);
       
@@ -507,7 +507,7 @@ function setupIpcHandlers(mainWindow) {
       }
       
       return new Promise((resolve) => {
-        const ytDlpMeta = spawn(ytDlpPath, ['--get-title', url], { shell: false });
+        const ytDlpMeta = spawn(status.ytDlpPath, ['--get-title', url], { shell: false });
         let output = '';
         
         ytDlpMeta.stdout.on('data', (data) => {
@@ -551,12 +551,9 @@ function setupIpcHandlers(mainWindow) {
     try {
       const status = await checkDependencies();
       
-      // Override the paths with absolute paths
-      status.ytDlpPath = path.resolve(getResourcePath('assets/bin/yt-dlp.exe'));
-      status.ffmpegPath = path.resolve(getResourcePath('assets/bin/ffmpeg.exe'));
-      status.ffprobePath = path.resolve(getResourcePath('assets/bin/ffprobe.exe'));
+      // No need to override paths - use the ones from dependencyStatus which come from npm packages
       
-      logToFile(`Download video with binaries: yt-dlp=${status.ytDlpPath}, ffmpeg=${status.ffmpegPath}, ffprobe=${status.ffprobePath}`);
+      logToFile(`Download video with npm package binaries: yt-dlp=${status.ytDlpPath}, ffmpeg=${status.ffmpegPath}, ffprobe=${status.ffprobePath}`);
       
       // Log the number of clips if provided
       if (options.clips && Array.isArray(options.clips)) {

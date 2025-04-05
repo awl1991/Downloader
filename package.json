@@ -44,6 +44,10 @@
         "electron": "^25.9.8",
         "electron-builder": "^24.13.3"
     },
+    "dependencies": {
+        "ffmpeg-static": "^5.2.0",
+        "ffprobe-static": "^3.1.0"
+    },
     "author": "Andrew Labunski",
     "license": "MIT"
 }
